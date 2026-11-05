@@ -62,7 +62,7 @@ cd $HOME/WorkBuddy/scan-app/androidbuild
 |---|---|---|
 | `sdkmanager` 写 `/root/.android/cache` 失败 | `FileSystemException: 不允许的操作`，随后报 `Failed to download any source lists!` | JVM 的 `user.home` 来自 passwd，改 `$HOME` 无效；必须 `JAVA_OPTS=-Duser.home=<可写目录>` |
 | AGP 写 `/root/.android/debug.keystore.lock` 失败 | `:app:validateSigningDebug FAILED`（配置都过不了，编到最后一公里才炸） | `ANDROID_USER_HOME=<可写目录>`。注意它指的是 **`.android` 目录本身**（debug.keystore 直接落在里面），不是它的父目录 |
-| 同时设 `ANDROID_USER_HOME` + `ANDROID_PREFS_ROOT` | 配置阶段就挂：`Could not create provider for value source ...AndroidDirectoryCreator` | **只能设 ANDROID_USER_HOME**，两个一起设 AGP 8.7 直接抛异常 |
+| 同时设 `ANDROID_USER_HOME` + `ANDROID_PREFS_ROOT` | 配置阶段就挂：`Could not create provider for value source ...AndroidDirectoryCreator` | 只能设 ANDROID_USER_HOME，两个一起设 AGP 8.7 直接抛异常 |
 | `-Dorg.gradle.jvmargs=-Duser.home=...` 无效 | 仍去写 `/root/.android` | AGP 的 `AndroidLocation` 不读构建 JVM 的 `user.home`，必须用 `ANDROID_USER_HOME` |
 | Gradle 需要 build-tools 34.0.0 | `Failed to find Build Tools revision 34.0.0`（AGP 自己会去下，但同样撞 `/root` 不可写） | 预先 `sdkmanager --install "build-tools;34.0.0"` |
 | 先装包后接受许可 | `--install` 卡在 `Accept? (y/N)`，进程被信号杀掉（退出码 137） | 先 `yes \| sdkmanager --licenses`，许可会写到 `<sdk>/licenses/` |

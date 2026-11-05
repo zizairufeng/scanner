@@ -68,7 +68,7 @@ import kotlin.math.roundToLong
  * 第 3 点是这次的关键，也是「不要再相信任何一次高度估算」的制度化：
  * 内容超预算时**变成滚动**，而不是像 v1.4.3 那样直接盖住底部翻页条。
  *
- * ⚠️ 这里与 v1.4.1 那个失败的 `verticalScroll` **有本质区别**，别混淆：
+ * 这里与 v1.4.1 那个失败的 `verticalScroll` **有本质区别**，别混淆：
  * v1.4.1 是「面板高度不钉死 + 滚动」→ 滚动容器把高度报成无限大，
  * sheet 的测量-摆放循环算不出可靠位置，最终仍按内容撑满并裁掉。
  * 现在是在**已经确定的固定高度内**滚动——父容器高度是常量，
@@ -131,7 +131,7 @@ fun SettingsSheet(
     // 这是本面板唯一允许改变高度的输入。
     val imeBottom = WindowInsets.ime.asPaddingValues().calculateBottomPadding()
 
-    // ★ 面板高度 = 固定开销 + 内容预算。**不是** wrapContent，也不是 fillMaxHeight。
+    // 面板高度 = 固定开销 + 内容预算。**不是** wrapContent，也不是 fillMaxHeight。
     //   固定开销明细见 [SettingsPage.PANEL_FIXED_OVERHEAD_DP] 的注释（约 202，取整 210）。
     //
     //   再跟屏幕可用高度取一次 min：常量预算是按 927dp 高的屏算的，小屏（例如 800dp）
@@ -723,7 +723,7 @@ private fun SwitchRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            // ★ 不能用固定 height(56.dp)：副标题在窄屏上会折成 2~3 行，固定高度装不下
+            // 不能用固定 height(56.dp)：副标题在窄屏上会折成 2~3 行，固定高度装不下
             //   会被**静默裁掉**，表现为文字被切一半——这就是 v1.4.1「排版乱」的直接来源。
             //   改用 heightIn(min = 56.dp)，让行高跟着文字实际行数长。
             .heightIn(min = 52.dp)

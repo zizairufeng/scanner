@@ -8,7 +8,7 @@ import java.util.zip.ZipOutputStream
  * 极小 xlsx 写入器：手写 zip + XML，**零第三方依赖**（F11）。
  *
  * 为什么不用 Apache POI：POI 全套打进来要好几 MB，正好抵消上一轮把包从 22.5MB
- * 砍到 10.87MB 的成果。而 xlsx 本质上就是「一个 zip 包 + 几个 XML 文件」，
+ * 砍到 10.87MB 的成果。而 xlsx 就是「一个 zip 包 + 几个 XML 文件」，
  * 我们只要「表头 + 若干行数据」这一丁点能力，手写完全够用。
  *
  * 实现取舍：
@@ -116,7 +116,7 @@ object XlsxWriter {
 
     // ───────────────────────── 工具 ─────────────────────────
 
-    /** 0→A, 25→Z, 26→AA。盘点导出最多几列，但写成通用形式避免以后加列时踩坑 */
+    /** 0→A, 25→Z, 26→AA。盘点导出最多几列，但写成通用形式避免以后加列时出错 */
     internal fun columnName(index: Int): String {
         require(index >= 0) { "列号不能为负" }
         var n = index

@@ -1,6 +1,6 @@
 # 07 · APK 构建与安装
 
-本文件记录**真实构建出来的可安装 APK**：它在哪、怎么装、怎么来的、以及哪些环节
+本文件记录真实构建出来的可安装 APK：它在哪、怎么装、怎么来的、以及哪些环节
 仍未在真机上验证过。
 
 ---
@@ -12,7 +12,7 @@
 | `dist/ScanStock-1.3-release.apk` | **11.04 MB** | **推荐安装这个**。R8 混淆 + 资源压缩，性能最好、无调试标记 |
 | `dist/ScanStock-1.3-debug.apk` | 20.60 MB | 备选。未混淆，排查问题时更容易看堆栈 |
 
-两个包的**功能完全相同**，差别只在编译优化。同包名不同签名，**不能同时装在一台手机上**，
+两个包的**功能完全相同**，差别只在编译优化。同包名不同签名，不能同时装在一台手机上，
 切换时需要先卸载另一个。
 
 校验值（用于确认传输过程没损坏）：
@@ -35,7 +35,7 @@ SHA256  ScanStock-1.3-debug.apk
 
 1. 把 `ScanStock-1.3-release.apk` 传到手机（微信文件传输 / USB 拷贝 / 网盘均可）
 2. 在手机上点开这个文件
-3. 系统会提示「未知来源应用」→ 选择**允许来自此来源的应用**
+3. 系统会提示「未知来源应用」→ 选择允许来自此来源的应用
 4. 确认安装 → 桌面出现「盘点扫描」图标
 
 ### 方式二：adb 安装（可看安装日志）
@@ -102,17 +102,17 @@ python C:/Users/czk/androidbuild/verify_apk.py <apk 路径>
 | 下载工具链（并行 3 线程） | 约 3 分钟（峰值 28 MB/s） |
 | 解压 | 约 20 秒 |
 | 安装 SDK 组件 | 1 分 11 秒 |
-| 构建 debug（首次，含依赖下载） | **11 分 03 秒** |
+| 构建 debug（首次，含依赖下载） | 11 分 03 秒 |
 | 构建 debug（增量，改一行后） | 43 秒 |
 | 构建 release（含 R8） | 5 分 12 秒 |
 
-编译结果：`BUILD SUCCESSFUL`，**Kotlin 编译器零 warning、零 error**。
+编译结果：`BUILD SUCCESSFUL`，Kotlin 编译器零 warning、零 error。
 
 ---
 
 ## 4. 构建过程发现并修掉的两个真问题
 
-这两个都不是"理论上可能"，是**编译和验收实测撞出来的**。
+这两个都不是"理论上可能"，是编译和验收实测撞出来的。
 
 ### 4.1 权限溢出：APK 里混进了网络权限
 
@@ -153,10 +153,10 @@ w: BarcodeAnalyzer.kt:34:5 Annotation 'androidx.camera.core.ExperimentalGetImage
    is not annotated with '@RequiresOptIn'. '@OptIn' has no effect.
 ```
 
-原因：CameraX 的 `ExperimentalGetImage` 用的是 **androidx 版**的 `@RequiresOptIn`，
-而代码里 `@OptIn` 解析到的是 **Kotlin 标准库**版本，两者不通用，所以那句 `@OptIn`
+原因：CameraX 的 `ExperimentalGetImage` 用的是 androidx 版的 `@RequiresOptIn`，
+而代码里 `@OptIn` 解析到的是 Kotlin 标准库版本，两者不通用，所以那句 `@OptIn`
 形同虚设。已改为显式导入 `androidx.annotation.OptIn`。修复后重建，
-**编译器零 warning**。
+编译器零 warning。
 
 ---
 
@@ -168,12 +168,12 @@ w: BarcodeAnalyzer.kt:34:5 Annotation 'androidx.camera.core.ExperimentalGetImage
 | `AndroidManifest.xml` / `resources.arsc` | 存在 |
 | dex 文件 | release 1 个（R8 已合并）、debug 6 个 |
 | 包名 | `com.example.scanstock` |
-| minSdk / targetSdk | **24 / 35** ✅ 符合需求 |
-| 权限 | **3 条**（CAMERA + VIBRATE + AndroidX 内部签名级权限）✅ |
-| 危险权限（INTERNET / 存储 / 定位等） | **0 条** ✅ |
-| 启动 Activity | `com.example.scanstock.MainActivity` ✅ |
+| minSdk / targetSdk | **24 / 35** 符合需求 |
+| 权限 | **3 条**（CAMERA + VIBRATE + AndroidX 内部签名级权限） |
+| 危险权限（INTERNET / 存储 / 定位等） | **0 条** |
+| 启动 Activity | `com.example.scanstock.MainActivity` |
 | 声明的 native ABI | arm64-v8a、armeabi-v7a、x86、x86_64 |
-| ML Kit 离线模型 | `libbarhopper_v3.so` 四个 ABI 全部打包 ✅ |
+| ML Kit 离线模型 | `libbarhopper_v3.so` 四个 ABI 全部打包 |
 | 签名 | release：v2 + v3 通过；debug：v2 通过 |
 | zipalign 4 字节对齐 | 通过 |
 
@@ -192,7 +192,7 @@ release 包用项目自带 keystore 签名（密钥材料在 `keystore/scanstock
 | 证书指纹 (SHA-256) | `66:56:73:95:CA:C3:F4:71:D8:C0:60:BF:3F:06:9A:2F:70:83:D3:2C:68:AB:2F:8D:D9:14:EC:81:79:F6:EF:92` |
 | 有效期 | 10950 天（约 30 年） |
 
-> ⚠️ 这是为你自用生成的密钥，密码是公开的弱口令。**如果要上架应用商店或分发给他人，
+> 注意：这是为你自用生成的密钥，密码是公开的弱口令。**如果要上架应用商店或分发给他人，
 > 必须重新生成一个强密码的 keystore 并妥善保管**——更换签名后，旧版本无法覆盖升级，
 > 用户需要先卸载。
 >
@@ -213,7 +213,7 @@ release 包用项目自带 keystore 签名（密钥材料在 `keystore/scanstock
 | 剪贴板复制 | 无系统剪贴板 | 复制全部后粘贴到备忘录核对 |
 | 相册识别 | 无相册 | 选一张有条码的照片 |
 | 权限拒绝降级页 | 无系统权限弹窗 | 首次拒绝权限，应进降级页而非白屏 |
-| **移除网络权限后是否影响功能** | 无设备 | **重点验证**：开飞行模式，冷启动 App，完整扫一遍（见 4.1 节） |
+| 移除网络权限后是否影响功能 | 无设备 | **重点验证**：开飞行模式，冷启动 App，完整扫一遍（见 4.1 节） |
 | 横竖屏切换后列表是否保留 | 无设备 | 旋转 10 次，列表条数应不变 |
 | release 包混淆后是否有反射问题 | 无设备 | release 包完整跑一遍主链路 |
 
@@ -224,10 +224,10 @@ v1.1 的 release 包是 **22.51 MB**，其中 `lib/` 下的 native 库占 19.47M
 
 | ABI | 未压缩大小 | 手机用得到吗 |
 |---|---|---|
-| x86 | 5.84 MB | ❌（只有模拟器/少数 x86 平板） |
-| x86_64 | 5.64 MB | ❌ |
-| arm64-v8a | 4.76 MB | ✅ 现在绝大多数手机 |
-| armeabi-v7a | 3.12 MB | ✅ 老款 32 位机型 |
+| x86 | 5.84 MB | （只有模拟器/少数 x86 平板） |
+| x86_64 | 5.64 MB | |
+| arm64-v8a | 4.76 MB | 现在绝大多数手机 |
+| armeabi-v7a | 3.12 MB | 老款 32 位机型 |
 
 v1.2 在 `app/build.gradle.kts` 的 `packaging` 里剔除了 x86 / x86_64：
 
@@ -267,9 +267,9 @@ python C:/Users/czk/androidbuild/verify_apk.py <apk 路径>
 
 > **release 构建脚本里有一处刻意的取舍：带了 `-x lintVitalRelease -x lintVitalAnalyzeRelease`。**
 > AGP 在 `assembleRelease` 时会顺带跑一次全量 lint 分析（`lintVital`），实测在本机耗时约 12 分钟
-> ——整轮 release 由 **3 分 27 秒**涨到 **17 分 41 秒**。它检查的是「上架前必须修的问题」，
+> ——整轮 release 由 **3 分 27 秒**涨到 17 分 41 秒。它检查的是「上架前必须修的问题」，
 > 与本项目「出一个可安装的包」的目标无关，且逻辑正确性已由 R8 深度核查（`deep_verify.py`）
-> 与 44 个单测覆盖，故跳过。**确实需要 lint 时单独执行：**
+> 与 44 个单测覆盖，故跳过。确实需要 lint 时单独执行：
 >
 > ```bash
 > gradle :app:lintVitalRelease
@@ -303,9 +303,9 @@ node tools/serve-apk.js --host 0.0.0.0         # 绑所有网卡（含回环）
 
 打开是一个索引页，列出两个包并显示各自的 SHA256，便于在手机上核对文件完整性。
 
-**防火墙（重要，已实测确认）**：
+防火墙（重要，已实测确认）：
 
-- 本机 Windows 防火墙的**域 / 专用 / 公用三个配置文件全部处于「关闭」状态**，
+- 本机 Windows 防火墙的域 / 专用 / 公用三个配置文件全部处于「关闭」状态，
   因此入站连接不会被拦，**不需要**额外添加放行规则。
 - 本机账号**非管理员**，`netsh advfirewall firewall add rule ...` 会返回
   「请求的操作需要提升」，加不了规则——当前不需要也就无所谓；
@@ -315,18 +315,18 @@ node tools/serve-apk.js --host 0.0.0.0         # 绑所有网卡（含回环）
   netsh advfirewall firewall add rule name="ScanStock-APK" dir=in action=allow protocol=TCP localport=8080
   ```
 
-- 服务默认为**每个外部网卡各起一个 listener**（同一端口、同一份内容），
+- 服务默认为每个外部网卡各起一个 listener（同一端口、同一份内容），
   但**不绑回环**——用 `127.0.0.1` 是访问不到的（探测存活请用 `netstat`，别用连通性测试）。
   本机有两块外部网卡时两条路都通：同 Wi-Fi 的手机走 `192.168.2.150`，
   装了 Tailscale 的设备走 `100.85.243.81`（在外面也能下）。
   要收窄暴露面就用 `--host <地址>` 只绑一个。
 - 只提供 `dist/` 下的两个 APK，路径白名单命中不了的一律 404，不列目录、不接受目录穿越。
 - 若手机打不开：先确认电脑与手机在同一 Wi-Fi 子网，再排查路由器是否开了
-  **AP 隔离 / 客户端隔离**（开了的话设备之间无法互访，需到路由器后台关掉）。
+  AP 隔离 / 客户端隔离（开了的话设备之间无法互访，需到路由器后台关掉）。
   如果手机装了 Tailscale 并与电脑同一 tailnet，可以直接用 `http://100.85.243.81:8080/`
   绕过全部局域网问题（不依赖同一 Wi-Fi、不受 AP 隔离影响）。
 
-**已知实现坑（改这个脚本时注意）**：`shaOf` 是 `Map`，遍历键必须写 `[...shaOf.keys()]`；
+已知实现坑（改这个脚本时注意）：`shaOf` 是 `Map`，遍历键必须写 `[...shaOf.keys]`；
 写成 `Object.keys(shaOf)` 会得到空数组，表现为「首页正常、文件全 404」。
 
 ---
@@ -340,19 +340,19 @@ node tools/serve-apk.js --host 0.0.0.0         # 绑所有网卡（含回环）
 | 去重查询用的「已录入码值集合」 | 每次识别回调都把 `items` 拷成一个 HashSet | ViewModel 里增量维护 `HashMap<String,Int>`（value→次数），把 keySet 视图传给 `CodeAdmission` | 20fps 下每秒少掉约 20 次 O(n) 遍历 + 20 次临时 HashSet 分配，GC 抖动显著降低（列表越长收益越大） |
 | 时间格式化 | 每次识别 `new SimpleDateFormat(...)` | 复用一个实例（只在主线程/ML Kit 主线程回调里调用，无并发） | SimpleDateFormat 构造很贵（内部带 Calendar + DecimalFormat），消除每次识别的固定开销 |
 | 「疑似条码，再靠近一点」提示 | 每帧回调都 `potentialTick + 1` | 节流到 300ms 一次 | 空闲（对着没码的画面）时 Compose 重组次数从约 20 次/秒 降到 最多 3 次/秒 |
-| 相册图片识别 | `InputImage.fromFilePath()` 直接解码整张原图 | 先 `inJustDecodeBounds` 读尺寸 → `ImageSampling.inSampleSize()` 算采样率 → 解码后最长边 ≤1600；EXIF 方向改用 `InputImage.fromBitmap(bmp, degrees)` 传给 ML Kit（不再生成旋转副本），用完 `recycle()` | 1200 万像素照片的 Bitmap 从约 **46MB** 降到约 **7.7MB**，这是本 App 最大的单点内存开销；同时不再有旋转大图副本 |
+| 相册图片识别 | `InputImage.fromFilePath` 直接解码整张原图 | 先 `inJustDecodeBounds` 读尺寸 → `ImageSampling.inSampleSize` 算采样率 → 解码后最长边 ≤1600；EXIF 方向改用 `InputImage.fromBitmap(bmp, degrees)` 传给 ML Kit（不再生成旋转副本），用完 `recycle` | 1200 万像素照片的 Bitmap 从约 **46MB** 降到约 **7.7MB**，这是本 App 最大的单点内存开销；同时不再有旋转大图副本 |
 
 采样率是纯函数，已用 7 个单测锁住行为（`ImageSamplingTest`）：必须是 2 的幂、
 缩放后最长边不超上限、非法尺寸返回 1、极端长条图不会死循环。
 
-**没有做的优化及原因**：ImageAnalysis 分辨率保持 1280×720（降分辨率省 CPU/内存，
+没有做的优化及原因：ImageAnalysis 分辨率保持 1280×720（降分辨率省 CPU/内存，
 但远距离解 1D 码会明显变难）；列表已是 `LazyColumn + key`，无需改。
 
 ---
 
 ## v1.6.0 产物与下载服务（2026-10-16，Linux 机器）
 
-这一版是搬到新机器（Linux）之后重新构建并复现的。构建环境的搭建过程与踩坑见
+这一版是搬到新机器（Linux）之后重新构建并复现的。构建环境的搭建过程见
 `tools/android-build/linux/README.md`；本次改动的说明见 `docs/17-v1.6-闪退日志与序号重排.md`。
 
 ### 产物
@@ -388,7 +388,7 @@ node 不一定在 PATH 里，而且容器/沙箱里还会被注入一个指向�
 （那个 preload 模块在容器里不存在，Node 会在启动阶段就 `MODULE_NOT_FOUND` 退出，
 报错看着像脚本坏了，其实跟脚本无关）。
 
-默认绑**所有外部网卡 + 回环**，启动报告里分组打出来：
+默认绑所有外部网卡 + 回环，启动报告里分组打出来：
 
 ```
 同一 Wi-Fi 的手机（手机连的是家里/办公室的 Wi-Fi）
@@ -401,7 +401,7 @@ node 不一定在 PATH 里，而且容器/沙箱里还会被注入一个指向�
 浏览器打开首页会列出 `dist/` 下所有 `ScanStock-*.apk`（含 SHA256 与下载链接），
 点「下载」手机即可安装。
 
-> **回环是 v1.6 才默认绑上的。** 以前只绑外部地址，于是在电脑本机敲
+> 回环是 v1.6 才默认绑上的。以前只绑外部地址，于是在电脑本机敲
 > `http://127.0.0.1:8080/` 必然失败——而这会被直接误判成「服务没起来」，
 > 白白去查一堆无关的东西。现在本机自测立刻可通，报告里也标注了「手机打不开这个地址」。
 
@@ -416,11 +416,11 @@ node 不一定在 PATH 里，而且容器/沙箱里还会被注入一个指向�
 1. **窗口还开着吗** —— 服务是前台进程，关掉终端/按了 Ctrl+C 就停了。
    这是最常见的原因（「昨天还能下，今天打不开」基本都是这个）。
    要长期挂着就用上面那条 `nohup`，或做成 systemd 服务。
-2. **手机和电脑在同一个 Wi-Fi 吗** —— 电脑当前在 `192.168.2.233/24`，
+2. 手机和电脑在同一个 Wi-Fi 吗 —— 电脑当前在 `192.168.2.233/24`，
    手机热点连着、或者连了另一个频段的访客网络，都不通。
-3. **路由器开了「AP 隔离 / 客户端隔离」吗** —— 开了之后同一 Wi-Fi 的设备之间互相看不见，
+3. 路由器开了「AP 隔离 / 客户端隔离」吗 —— 开了之后同一 Wi-Fi 的设备之间互相看不见，
    属于服务完全正常但谁都连不上。要到路由器后台关掉。
-4. **电脑防火墙放行了吗** —— `sudo ufw status`，没放行就 `sudo ufw allow 8080/tcp`。
+4. 电脑防火墙放行了吗 —— `sudo ufw status`，没放行就 `sudo ufw allow 8080/tcp`。
 5. **地址有没有敲全** —— 要含 `http://` 和端口号：`http://192.168.2.233:8080/`，
    只敲 IP 或者敲成 `https://` 都不行。
 
@@ -431,10 +431,10 @@ node 不一定在 PATH 里，而且容器/沙箱里还会被注入一个指向�
 #### 最快的定位手段：看服务自己的访问日志
 
 服务每收到一次请求都会打一行 `[时间] 来源IP 访问首页 / 下载 xxx`，
-**这就是判断「手机到底有没有连上」的铁证**：
+这就是判断「手机到底有没有连上」的铁证：
 
 - 日志里出现了手机的 IP → 请求到了，问题在下载/安装那一侧（比如微信内置浏览器）。
-- 反复试都没有手机的 IP → 请求**根本没到达这台机器**，属于网络可达性问题，
+- 反复试都没有手机的 IP → 请求根本没到达这台机器，属于网络可达性问题，
   按上面 1~4 条查，别再折腾 App 和脚本了。
 
 （2026-10-16 就是靠这条把范围锁死的：服务端一切正常，但日志里从头到尾只有本机自己的

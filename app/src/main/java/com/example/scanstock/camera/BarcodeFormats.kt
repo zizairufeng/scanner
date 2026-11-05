@@ -16,7 +16,7 @@ object BarcodeFormats {
     /**
      * 需求指定的 7 种码制，逐个显式列出。
      *
-     * ⚠️ 刻意**不用** Barcode.FORMAT_ALL_FORMATS：
+     * 这里刻意**不用** Barcode.FORMAT_ALL_FORMATS：
      * 那个常量会把 PDF417 / Aztec / Codabar / ITF / UPC-E 一并打开，
      * 多出来的码制会抬高误识率（货架背景文字常被误判成 Code-39），
      * 也会增加单帧耗时、拉低连续扫描帧率。盘点场景的真实码制集合就是这 7 种。

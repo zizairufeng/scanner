@@ -85,16 +85,16 @@ ScanStock/
 
 ## 实现要点
 
-**预览与分析分离。** `Preview` 和 `ImageAnalysis` 是两个独立 UseCase。分析流用
-`STRATEGY_KEEP_ONLY_LATEST` 丢中间帧，`imageProxy.close()` 放在 ML Kit 的 `addOnCompleteListener`
+预览与分析分离。`Preview` 和 `ImageAnalysis` 是两个独立 UseCase。分析流用
+`STRATEGY_KEEP_ONLY_LATEST` 丢中间帧，`imageProxy.close` 放在 ML Kit 的 `addOnCompleteListener`
 里当背压闸门，因此预览不掉帧，也不会多帧并发解析。
 
-**两级去重。** `DedupeTracker.shouldAccept()` 无论是否计入都刷新时间戳，只要码还在画面里就进不了
-「距上次上报满 1.5 秒」的状态，对着同一个码扫 10 秒只产生 1 条。判定入口收在 `CodeAdmission.admit()`：
+两级去重。`DedupeTracker.shouldAccept` 无论是否计入都刷新时间戳，只要码还在画面里就进不了
+「距上次上报满 1.5 秒」的状态，对着同一个码扫 10 秒只产生 1 条。判定入口收在 `CodeAdmission.admit`：
 先做同帧去重（一帧里多个相同码只记第一条，不受开关影响），再做跨帧时间窗去重（受主屏开关控制）。
 关掉后逐帧留痕，20fps 对准一个码 10 秒约 189 条，属预期行为，所以开关在关闭态用警示配色。
 
-**权限拒绝不留白屏。** 未申请 / 可再问 / 永久拒绝三态处理，顶栏「相册」入口始终可用，
+权限拒绝不留白屏。未申请 / 可再问 / 永久拒绝三态处理，顶栏「相册」入口始终可用，
 没有相机权限也能靠 Photo Picker 完成盘点。
 
 ## 验证情况
@@ -118,7 +118,7 @@ ScanStock/
 | 事项 | 说明 |
 |---|---|
 | 额外声明 `VIBRATE` | 调用 `Vibrator` / `VibratorManager` 必须持有该权限，否则震动静默失效。normal 级权限，安装即授予，不弹窗。 |
-| 使用了 `enableAllPotentialBarcodes()` | 打开的是 ML Kit「检测到条码但解码失败」的信号，用于暗光或模糊时提示靠近。这些结果只做提示，不进列表。 |
+| 使用了 `enableAllPotentialBarcodes` | 打开的是 ML Kit「检测到条码但解码失败」的信号，用于暗光或模糊时提示靠近。这些结果只做提示，不进列表。 |
 
 ## 未实现
 

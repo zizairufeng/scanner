@@ -413,7 +413,7 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
             // 索引同步减一；归零则删键，保证「不在列表里」== 「不在索引里」
             val left = (valueIndex[removed.value] ?: 0) - 1
             if (left <= 0) valueIndex.remove(removed.value) else valueIndex[removed.value] = left
-            // ★ 重排：删掉中间那条之后，后面的全部前移一位补齐断号
+            // 重排：删掉中间那条之后，后面的全部前移一位补齐断号
             state.copy(items = SequenceRenumber.renumber(state.items.filterIndexed { i, _ -> i != index }))
         }
         val item = removedItem

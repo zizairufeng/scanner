@@ -14,7 +14,7 @@ import android.os.SystemClock
  * 会每 1.5 秒往列表里塞一条，仍然刷屏——那正是本类要消灭的现象。
  *
  * 线程安全：内部只被分析器回调（ML Kit Task 默认主线程）访问，且 ScanViewModel
- * 统一在单一入口调用；这里用 synchronized 兜底，避免将来切线程时踩坑。
+ * 统一在单一入口调用；这里用 synchronized 兜底，避免将来切线程时出错。
  *
  * @param initialWindowMillis 去重时间窗，默认 1500ms，可在设置里 100~10000ms 调节。
  */

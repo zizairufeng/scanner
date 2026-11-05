@@ -49,7 +49,7 @@ import java.util.concurrent.atomic.AtomicLong
  *    「单次超过 150ms 就停」这道按级判的闸门，五级累加仍可到 400~700ms，
  *    这段时间新帧全被丢掉，于是「码越难扫画面越卡」。现在整条链共用一个总预算。
  *
- * ## ⚠️ 不要换成 CameraX 的 MlKitAnalyzer
+ * ## 不要换成 CameraX 的 MlKitAnalyzer
  *
  * ML Kit 官方的 autozoom（`ZoomSuggestionOptions` 的 `ZoomCallback`）**只在**
  * `Detector.process(image: InputImage)` 这条路径上被处理。
@@ -145,7 +145,7 @@ class BarcodeAnalyzer(
      * 命中时把游标移到命中的那一级——这样连续扫同款货第一级就中，
      * 而换成别的尺寸时，未命中的轮次会把游标一路推下去，1~2 秒覆盖全部尺寸。
      *
-     * ⚠️ 不要再用一个「上次命中级别」的独立变量来决定起点：那样只要它一直有效，
+     * 不要再用一个「上次命中级别」的独立变量来决定起点：那样只要它一直有效，
      * 每轮都从同一级开始，换了尺寸的码所在的级别**永远轮不到**（不报错，只是扫不出）。
      * v1.8.2 之前正是这么写的，本次改掉。
      */
@@ -197,7 +197,7 @@ class BarcodeAnalyzer(
         val frameStartedAt = SystemClock.elapsedRealtime()
 
         scanner.process(inputImage)
-            // ★ 显式指定 workExecutor：见类注释，回调里可能会同步等待二次识别
+            // 显式指定 workExecutor：见类注释，回调里可能会同步等待二次识别
             .addOnCompleteListener(workExecutor) { task ->
                 try {
                     if (!task.isSuccessful) {

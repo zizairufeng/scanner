@@ -37,7 +37,7 @@ import java.util.Arrays
  * | 原图直接解（Hybrid / Global / ALSO_INVERTED 任一） | ✗ |
  * | 反色 + `HybridBinarizer` | ✗ |
  * | **反色 + `GlobalHistogramBinarizer`** | **✓ 稳定命中** |
- * | 反色 + 对比度拉伸 | ⚠ 反而更差（放大后失败） |
+ * | 反色 + 对比度拉伸 | 反而更差（放大后失败） |
  *
  * 三个结论直接决定了本类的写法：
  *
@@ -137,7 +137,7 @@ object ZxingDecoder {
 
         val pad = (minOf(width, height) * QUIET_ZONE_RATIO).toInt()
             .coerceIn(MIN_QUIET_ZONE_PX, MAX_QUIET_ZONE_PX)
-        // ★ 顺序很重要：先反色、再补白边。
+        // 顺序很重要：先反色、再补白边。
         //   反过来（先补白再反色）白边会被反成黑框，包在码外面的那圈黑框
         //   会干扰定位图案搜索——实测同一条码就这样从「能解」变成「解不出」。
         val padded = padWithWhite(pixels, width, height, pad)
@@ -163,7 +163,7 @@ object ZxingDecoder {
 
         val pad = (minOf(width, height) * DPM_QUIET_ZONE_RATIO).toInt()
             .coerceIn(MIN_QUIET_ZONE_PX, MAX_QUIET_ZONE_PX)
-        // ★ 先反色、再补白边（理由见 decode 里的同款注释）
+        // 先反色、再补白边（理由见 decode 里的同款注释）
         val inverted = padWithWhite(invert(pixels), width, height, pad)
 
         // ① 反色 + 全局直方图：实测唯一命中过蚀刻码的组合，必须排第一
