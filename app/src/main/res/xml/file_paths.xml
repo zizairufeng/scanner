@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  FileProvider 的授权路径。
+
+  只暴露两个**窄目录**：
+    cacheDir/exports/  导出结果（F3 分享，用完即弃）
+    cacheDir/logs/     运行日志 / 崩溃报告合并包（v1.6，发给开发者用）
+
+  而不是开放整个存储：既不需要任何存储权限，也不会把 App 私有目录的其它内容
+  （会话快照、相册临时文件）暴露给接收方。
+
+  ⚠️ 「实时运行日志」不在这个白名单里：它写在 filesDir/logs/（不会被系统清理），
+  只有**导出时合并出来的那一个 txt** 才落到 cacheDir/logs/ 被分享出去。
+  两个目录同名但根不同，靠 name 区分 —— 别把它们合成一条 <files-path>，
+  那等于把私有 files 目录整个开出去。
+-->
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <cache-path name="exports" path="exports/" />
+    <cache-path name="logexports" path="logs/" />
+</paths>

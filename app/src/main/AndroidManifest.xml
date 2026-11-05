@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!--
+      权限声明说明（重要）：
+      1) CAMERA：唯一需要「运行时申请」的权限，相机预览与分析必需。
+      2) VIBRATE：normal 级权限，安装即授予，不弹窗。Android 系统规定
+         VibratorManager / Vibrator 的服务调用必须持有该权限，否则震动静默失效。
+         这是「仅声明 CAMERA」之外唯一必需的例外，已在假设清单中显式说明。
+      3) 不做相册读取权限声明：使用 Photo Picker（PickVisualMedia），
+         由系统选择器授权单张图片的读取权，无需 READ_MEDIA_IMAGES / READ_EXTERNAL_STORAGE。
+    -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+
+    <!--
+      4) 显式移除依赖库自动注入的网络权限（实测发现，非推测）：
+         com.google.mlkit:barcode-scanning 的 manifest 会带入 INTERNET 与
+         ACCESS_NETWORK_STATE 两条权限，它们只服务于 ML Kit 的使用统计上报，
+         与条码识别功能无关。本项目用的是「捆绑模型」版本（模型已打进 APK，
+         见 lib/*/libbarhopper_v3.so），识别 100% 端侧完成。
+         移除后 App 在系统层面不再具备联网能力，与需求的「仅声明 CAMERA、
+         端侧离线、不依赖网络」完全一致；用户安装时看到的权限列表也更干净。
+
+         风险与验证方式：ML Kit 的统计上报在没有网络权限时会静默失败，不影响
+         识别。但本项改动**尚未在真机上实测**（构建环境无设备），请按验收清单
+         I5「移除网络权限后功能无损」一条确认；若出现异常，删掉下面两行即可回滚。
+    -->
+    <uses-permission android:name="android.permission.INTERNET" tools:node="remove" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" tools:node="remove" />
+
+    <!-- 无摄像头设备不提供安装，避免装上后无法使用主链路 -->
+    <uses-feature android:name="android.hardware.camera.any" android:required="true" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.flash" android:required="false" />
+
+    <application
+        android:name=".ScanStockApp"
+        android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.ScanStock"
+        android:enableOnBackInvokedCallback="true">
+
+        <!--
+          v1.6：屏幕方向锁定为竖屏。
+
+          之前是 fullSensor（跟随重力感应四向旋转），v1.5 里还专门写了注释说
+          「不锁横屏是因为货架高位/低位横持更顺手」。实测下来的结论相反：
+          盘点时手机是单手握着对着货架扫，扫描过程中手腕自然转动就会触发旋转，
+          画面一转 → Activity 重建 → CameraX 解绑重绑 → 预览黑一下、这一两秒扫不到，
+          更糟的是旋转瞬间偶发 Surface 已释放的原生层异常（闪退的主因之一）。
+
+          所以改成 portrait：整机只有一个方向，相机绑定在 App 生命周期里只发生一次。
+          代价是横持时画面不跟着转，对「扫码」这个动作没有影响（取景框本来就居中）。
+        -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:screenOrientation="portrait"
+            android:windowSoftInputMode="adjustResize"
+            android:theme="@style/Theme.ScanStock">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!--
+          FileProvider（F3 导出分享 + v1.6 日志导出）
+          把 cacheDir/exports/（导出结果）与 cacheDir/logs/（日志包）下的文件
+          以 content:// Uri 的形式单次授权给接收方，
+          这样既不需要 READ/WRITE_EXTERNAL_STORAGE，也不会暴露 App 私有目录的其它内容。
+          exported 必须为 false，且必须配合 FLAG_GRANT_READ_URI_PERMISSION 使用
+          （ScanScreen.shareFile 里已带）。
+        -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+    </application>
+
+</manifest>

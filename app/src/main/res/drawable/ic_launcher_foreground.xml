@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 由 tools/gen_icon.py 生成：白色四角取景框 + 亮绿条码 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:pathData="M30,49 L30,30 L49,30"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="5.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M59,30 L78,30 L78,49"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="5.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M78,59 L78,78 L59,78"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="5.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M49,78 L30,78 L30,59"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="5.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000" />
+    <path
+        android:pathData="M38.75,45.5 H44.75 V62.5 H38.75 Z"
+        android:fillColor="#FF7BE8B0" />
+    <path
+        android:pathData="M47.75,45.5 H51.75 V62.5 H47.75 Z"
+        android:fillColor="#FF7BE8B0" />
+    <path
+        android:pathData="M54.75,45.5 H60.25 V62.5 H54.75 Z"
+        android:fillColor="#FF7BE8B0" />
+    <path
+        android:pathData="M63.25,45.5 H69.25 V62.5 H63.25 Z"
+        android:fillColor="#FF7BE8B0" />
+</vector>

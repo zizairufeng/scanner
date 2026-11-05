@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      仅作为 Activity 的宿主主题：真正的配色由 Compose Material3 主题（ui/theme/Theme.kt）负责。
+      NoActionBar 必须，否则 Compose Scaffold 的 TopAppBar 会和系统 ActionBar 叠在一起。
+    -->
+    <style name="Theme.ScanStock" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@android:color/white</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+</resources>

@@ -1,0 +1,30 @@
+// 中国网络环境加速：把 google()/mavenCentral()/gradlePluginPortal() 全部换成阿里云镜像。
+// 放在 $GRADLE_USER_HOME/init.d/ 下，由 Gradle 自动加载（不改动工程本身的构建脚本）。
+//
+// 实测（本轮）：maven.aliyun.com ≈ 19.5 MB/s，repo1.maven.org ≈ 1.2 MB/s，
+// dl.google.com 本身也不慢（≈15 MB/s），但 mavenCentral 是主要瓶颈。
+
+def MIRRORS = [
+    'https://maven.aliyun.com/repository/google',
+    'https://maven.aliyun.com/repository/public',
+    'https://maven.aliyun.com/repository/gradle-plugin',
+]
+
+def fill = { repoHandler ->
+    repoHandler.clear()
+    MIRRORS.each { u -> repoHandler.maven { setUrl(u) } }
+}
+
+settingsEvaluated { settings ->
+    // 插件解析（AGP / Kotlin / Compose 编译器插件）
+    fill(settings.pluginManagement.repositories)
+    // 依赖解析（androidx / camerax / ML Kit ...）
+    fill(settings.dependencyResolutionManagement.repositories)
+}
+
+// 工程自身在 settings.gradle.kts 里设了 FAIL_ON_PROJECT_REPOS，
+// 所以这里绝对不要在 project 上声明 repositories。
+gradle.beforeProject { project ->
+    project.buildscript.repositories.clear()
+    MIRRORS.each { u -> project.buildscript.repositories.maven { setUrl(u) } }
+}
