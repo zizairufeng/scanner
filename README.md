@@ -25,10 +25,13 @@
 > **构建产物不入库。** APK 体积大，`dist/` 与签名密钥 `keystore/` 都已列入 `.gitignore`。
 > 现成安装包请从下方发布页获取，或按「从源码构建」自己出包。
 
-现成安装包：<https://scanstock-apk.app.workbuddy.host/>
+现成安装包有两个来源，任选其一：
+
+- **GitHub Releases**（推荐，附 SHA256）：<https://github.com/zizairufeng/scanner/releases/latest>
+- **自建下载页**（release + debug 都有）：<https://scanstock-apk.app.workbuddy.host/>
 
 - **release**：11.36 MB，R8 混淆 + 资源压缩，日常安装用这个
-- **debug**：21.1 MB，未混淆，排查问题时更易看堆栈
+- **debug**：21.1 MB，未混淆，排查问题时更易看堆栈（仅自建页提供）
 
 两者功能完全相同，同包名不同签名，**不能共存**，切换前先卸载另一个。
 
