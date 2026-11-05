@@ -446,17 +446,11 @@ node 不一定在 PATH 里，而且容器/沙箱里还会被注入一个指向�
 而这些又要动宿主机的虚拟机设置才能改，那更省事的做法是**绕开局域网**：
 把下载页作为一个静态站点发布出去，手机点链接就能下。
 
-本项目当前已发布的下载页：
+本项目当前不提供自建下载页，安装包统一走 GitHub Releases：
 
 ```
-https://scanstock-apk.app.workbuddy.host/
-    ├── index.html                     手机友好的下载页（含安装说明、更新内容、SHA256）
-    ├── ScanStock-1.6.0-release.apk    11.1 MB
-    └── ScanStock-1.6.0-debug.apk      20.7 MB
+https://github.com/zizairufeng/scanner/releases/latest
 ```
 
-站点源文件不在本工程里，而在**与工程目录同级**的工作区下：
-`../apk-site/`（即 `scan-app/apk-site/`，含 `index.html` + 两个 APK）。
-更新版本时的做法：把新 APK 拷进去、改 `index.html` 里的版本号与 SHA256，再重新发布一次即可。
-发布页面的管理入口在 WorkBuddy 的「设置—数据管理—应用」。
-维护脚本见 `tools/lan-doctor.sh`（局域网自检）。
+（2026-11-06 更新：原先的 `scanstock-apk.app.workbuddy.host` 下载页已下线，站点目录
+`scan-app/apk-site/` 已删除，APK 改由 Release 附件分发。）
