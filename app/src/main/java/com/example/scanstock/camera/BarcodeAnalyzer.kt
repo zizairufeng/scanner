@@ -15,7 +15,9 @@ import com.example.scanstock.domain.RefineBudget
 import com.example.scanstock.domain.RoiPlan
 import com.example.scanstock.domain.RoiPlanner
 import com.example.scanstock.domain.ScanTuning
+import com.example.scanstock.logging.AppLog
 import com.example.scanstock.util.ImageEnhance
+import com.google.android.gms.tasks.Task
 import com.google.android.gms.tasks.Tasks
 import com.google.mlkit.vision.barcode.BarcodeScanner
 import com.google.mlkit.vision.barcode.common.Barcode
@@ -166,8 +168,38 @@ class BarcodeAnalyzer(
     /** 上次「太近会失焦」提示的时刻 */
     private val lastFocusHintAt = AtomicLong(0L)
 
+    /**
+     * 本分析器是否已作废（v1.8.8），由 [release] 置位。
+     *
+     * 与 [workExecutor] 的关闭是两件事，必须分开管：
+     *  - 执行器被关 → 新来的 `analyze()` 投递失败（已由 RejectionTolerantExecutor 兜住）；
+     *  - 扫描器被 `close()` → 再调 `scanner.process()` 会抛异常。
+     *
+     * 但 CameraX 的最后一帧完全可能落在「页面 onDispose 已经跑完」之后，
+     * 那时它还会照样调 `analyze()`。没有这道闸门，这一帧就会直接撞上已关闭的扫描器，
+     * 异常抛在分析线程上 → 进程闪退（1.8.7 那次的同类根因）。
+     */
+    @Volatile
+    private var released = false
+
+    /**
+     * 标记为已释放：此后到达的帧一律直接关闭、不再送识别。
+     *
+     * **必须在 `scanner.close()` 与执行器 `shutdown()` 之前调用**
+     * （见 `CameraPreviewCard` 的 onDispose 顺序），否则闸门形同虚设。
+     */
+    fun release() {
+        released = true
+    }
+
     @OptIn(ExperimentalGetImage::class)
     override fun analyze(imageProxy: ImageProxy) {
+        // ---- 释放闸门（v1.8.8）：页面已销毁后到达的帧，原样放行，绝不碰已关闭的扫描器 ----
+        if (released) {
+            imageProxy.close()
+            return
+        }
+
         // ---- 帧间隔闸门：没到间隔就把这帧原样放行给下一帧，绝不占着缓冲区 ----
         val interval = frameIntervalMs
         if (interval > 0L) {
@@ -196,46 +228,84 @@ class BarcodeAnalyzer(
         // 这段包含了主趟 + 整条补救链，正是用户感知到的「这一帧占用了多久」。
         val frameStartedAt = SystemClock.elapsedRealtime()
 
-        scanner.process(inputImage)
+        // 送检本身也可能失败：扫描器已 close()（拆除流程最后一段）、或 ML Kit 内部已停。
+        // 这一帧原样放行即可——异常绝不能从分析线程往外抛，那是进程级的。
+        val pending = runCatching { scanner.process(inputImage) }.getOrElse { t ->
+            imageProxy.close()
+            onError(t)
+            return
+        }
+
+        // v1.8.8：把「出结果之后的整段处理」抽到 [onFrameComplete]，
+        // 这里只负责提交。这样「提交失败要自己关帧」这层兜底才写得不绕。
+        val attached = runCatching {
             // 显式指定 workExecutor：见类注释，回调里可能会同步等待二次识别
-            .addOnCompleteListener(workExecutor) { task ->
-                try {
-                    if (!task.isSuccessful) {
-                        // 单帧失败不是致命错误（常见于镜头切换/图像损坏），只上报不中断
-                        task.exception?.let { onError(it) }
-                        return@addOnCompleteListener
-                    }
-
-                    val barcodes = task.result.orEmpty()
-                    val primary = barcodes.map(::toDetectedCode)
-
-                    // ---- 第二段：精读（v1.5 候选框 → v1.7 中心区 + 第二引擎）----
-                    // 只在「一张码都没解出来」时才走，正常扫到码的快路径完全不受影响。
-                    val refined = if (primary.any { !it.potentialOnly }) {
-                        consecutiveMisses.set(0)
-                        emptyList()
-                    } else {
-                        refinePass(barcodes, imageProxy, rotationDegrees)
-                    }
-
-                    if (refined.isNotEmpty()) {
-                        consecutiveMisses.set(0)
-                    } else if (primary.isNotEmpty()) {
-                        // 有候选框却一码未解：可能太近/太抖/太斜，累计到阈值就提示用户
-                        noteMiss()
-                    }
-
-                    onResult(if (refined.isEmpty()) primary else primary + refined)
-                } catch (t: Throwable) {
-                    // 精读属于「锦上添花」，任何异常都不该吞掉已经拿到的主结果
-                    onError(t)
-                } finally {
-                    // 无论成功失败都必须释放，否则 CameraX 永远不会送来下一帧
-                    val ended = SystemClock.elapsedRealtime()
-                    frameMeter.record(endAtMs = ended, costMs = ended - frameStartedAt)
-                    imageProxy.close()
-                }
+            pending.addOnCompleteListener(workExecutor) { task ->
+                onFrameComplete(task, imageProxy, rotationDegrees, frameStartedAt)
             }
+        }
+        if (attached.isFailure) {
+            // workExecutor 已 shutdown 时 addOnCompleteListener 会**当场**抛
+            // RejectedExecutionException（默认 AbortPolicy）。此后再没有任何监听器
+            // 会来执行收尾，所以这一帧必须自己关，否则 CameraX 的背压闸门永远不放行，
+            // 表现为「画面还在动、就是再也不识别」。
+            runCatching { imageProxy.close() }
+            AppLog.w(
+                TAG,
+                "移交识别结果失败（分析执行器已关闭），已直接释放该帧",
+                attached.exceptionOrNull()
+            )
+        }
+    }
+
+    /**
+     * 一帧的收尾：主结果 → 补救链 → 回调 UI → 记账 → 释放缓冲区。
+     *
+     * 抽成方法是为了让 [analyze] 里「提交任务」与「任务失败」两条路径都读得清楚：
+     * 无论走哪条，**ImageProxy 都必须被 close 一次**，这是 CameraX 送下一帧的唯一开关。
+     */
+    private fun onFrameComplete(
+        task: Task<List<Barcode>>,
+        imageProxy: ImageProxy,
+        rotationDegrees: Int,
+        frameStartedAt: Long
+    ) {
+        try {
+            if (!task.isSuccessful) {
+                // 单帧失败不是致命错误（常见于镜头切换/图像损坏），只上报不中断
+                task.exception?.let { onError(it) }
+                return
+            }
+
+            val barcodes = task.result.orEmpty()
+            val primary = barcodes.map(::toDetectedCode)
+
+            // ---- 第二段：精读（v1.5 候选框 → v1.7 中心区 + 第二引擎）----
+            // 只在「一张码都没解出来」时才走，正常扫到码的快路径完全不受影响。
+            val refined = if (primary.any { !it.potentialOnly }) {
+                consecutiveMisses.set(0)
+                emptyList()
+            } else {
+                refinePass(barcodes, imageProxy, rotationDegrees)
+            }
+
+            if (refined.isNotEmpty()) {
+                consecutiveMisses.set(0)
+            } else if (primary.isNotEmpty()) {
+                // 有候选框却一码未解：可能太近/太抖/太斜，累计到阈值就提示用户
+                noteMiss()
+            }
+
+            onResult(if (refined.isEmpty()) primary else primary + refined)
+        } catch (t: Throwable) {
+            // 精读属于「锦上添花」，任何异常都不该吞掉已经拿到的主结果
+            onError(t)
+        } finally {
+            // 无论成功失败都必须释放，否则 CameraX 永远不会送来下一帧
+            val ended = SystemClock.elapsedRealtime()
+            frameMeter.record(endAtMs = ended, costMs = ended - frameStartedAt)
+            imageProxy.close()
+        }
     }
 
     // ──────────────────────── 精读管线（v1.7）────────────────────────
@@ -761,6 +831,9 @@ class BarcodeAnalyzer(
     fun perfSnapshot(): PerfSnapshot = frameMeter.snapshot(SystemClock.elapsedRealtime())
 
     private companion object {
+        /** 相机层日志标签（AppLog 里区分「分析器」与「ViewModel」的来源） */
+        const val TAG = "Camera"
+
         /** 不透明灰度像素的高 8 位（alpha = 255） */
         const val OPAQUE_GRAY = 0xFF shl 24
 

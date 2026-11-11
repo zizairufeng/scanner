@@ -47,9 +47,14 @@ import com.example.scanstock.camera.BarcodeFormats
 import com.example.scanstock.domain.DetectedCode
 import com.example.scanstock.domain.ScanPerf
 import com.example.scanstock.domain.ScanTuning
+import com.example.scanstock.logging.AppLog
+import com.example.scanstock.util.RejectionTolerantExecutor
+import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.delay
+
+private const val TAG = "Camera"
 
 /**
  * 相机预览 + 图像分析绑定卡片。
@@ -148,7 +153,23 @@ fun CameraPreviewCard(
     // 分辨率档位 / 增强识别 变化时必须重建整个相机绑定（见上方 KDoc 说明）。
     // frameIntervalMs 不在 key 里 —— 它是 @Volatile，直接改分析器字段即可，无需重绑。
     DisposableEffect(lifecycleOwner, analysisProfile, enhancedRecognition) {
-        val analyzerExecutor = Executors.newSingleThreadExecutor()
+        AppLog.i(
+            TAG,
+            "相机初始化（分析档位=${analysisProfile.width}x${analysisProfile.height}，" +
+                "增强识别=$enhancedRecognition）"
+        )
+        // 单线程池 + 防拒绝包装（v1.8.8）。
+        //
+        // 裸 `Executors.newSingleThreadExecutor()` 用的是 AbortPolicy：池子 shutdown() 之后
+        // 任何人再 execute() 都会**当场抛** RejectedExecutionException。而这个池子的两类提交方
+        // 都不受我们控制时机——
+        //   1) CameraX 在解绑前后仍可能投递最后一帧的 analyze()；
+        //   2) ML Kit 的识别是异步的，shutdown() 那一刻可能还有在途任务要回投回调。
+        // 一旦抛出，异常会落在「正好在跑的那个线程」上（1.8.7 那次是主线程），进程直接被杀。
+        // 包一层之后这类投递只记账、不抛，页面销毁后的丢弃完全是预期行为。
+        val rawExecutor = Executors.newSingleThreadExecutor()
+        val analyzerExecutor: Executor =
+            RejectionTolerantExecutor(rawExecutor, name = "camera-analyzer")
         // 自动变焦：ML Kit 在「画面里有码但太远解不出」时回调建议倍率。
         // 这里不传 maxSupportedZoomRatio（创建扫描器时相机还没绑好，拿不到真实上限），
         // 改为在回调里 clamp 到 maxZoom —— 缺了这一步，库会给出超过硬件能力的倍率。
@@ -190,12 +211,16 @@ fun CameraPreviewCard(
         analyzerHolder = analyzer
 
         var provider: ProcessCameraProvider? = null
+        // 留着绑定后的分析用例：拆除时**必须先 clearAnalyzer()** 再 shutdown 执行器，
+        // 否则 CameraX 在「解绑 → 最后一帧回调」这段窗口里还会往已关闭的池子投任务。
+        var analysisUseCase: ImageAnalysis? = null
         var disposed = false
 
         val future = ProcessCameraProvider.getInstance(context)
         val bindRunnable = Runnable {
             if (disposed) return@Runnable
             val cameraProvider = runCatching { future.get() }.getOrElse { e ->
+                AppLog.e(TAG, "相机提供者获取失败", e)
                 currentOnError(e)
                 return@Runnable
             }
@@ -227,6 +252,7 @@ fun CameraPreviewCard(
                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                 .build()
                 .also { it.setAnalyzer(analyzerExecutor, analyzer) }
+            analysisUseCase = imageAnalysis
 
             runCatching {
                 cameraProvider.unbindAll()
@@ -242,20 +268,41 @@ fun CameraPreviewCard(
                 // 但要受硬件真实上限 maxZoom 约束，不能凭空放大。
                 val usableZoom = maxOf(maxZoom, currentMaxZoomFloor)
                 val hasFlash = bound.cameraInfo.hasFlashUnit()
+                AppLog.i(
+                    TAG,
+                    "相机已绑定（档位=${analysisProfile.width}x${analysisProfile.height}，" +
+                        "变焦上限=$maxZoom，闪光灯=$hasFlash）"
+                )
                 currentOnCameraReady(usableZoom, hasFlash)
             }.onFailure { e ->
                 // 相机被占用 / 无后置镜头：给可读提示，不崩溃
+                AppLog.e(TAG, "相机绑定失败", e)
                 currentOnError(e)
             }
         }
         future.addListener(bindRunnable, mainExecutor)
 
+        // 拆除顺序是这次闪退修复的核心（v1.8.8），必须严格照这个次序：
+        //
+        //   ① analyzer.release()      —— 先立闸门：此后到达的帧直接放行，不再送识别；
+        //   ② clearAnalyzer()         —— 让 CameraX 停止向分析器投递帧；
+        //   ③ unbindAll()             —— 解绑用例，相机流水线彻底停下；
+        //   ④ scanner.close()         —— 关掉 ML Kit（它内部还有线程与在途识别）；
+        //   ⑤ rawExecutor.shutdown()  —— 最后才关执行器。
+        //
+        // 1.8.7 的顺序是「unbindAll → shutdown → close」，等于在还有在途任务时先把池子关了；
+        // 那些任务完成回来投回调时撞上已终止的池子 → RejectedExecutionException → 闪退。
+        // 即便按现在的顺序，ML Kit 内部仍可能晚一步回调，所以执行器外面还有
+        // RejectionTolerantExecutor 兜底——两道防线一起才够。
         onDispose {
             disposed = true
             analyzerHolder = null
+            AppLog.i(TAG, "相机释放（停止分析器 → 解绑 → 关扫描器 → 关执行器）")
+            analyzer.release()
+            runCatching { analysisUseCase?.clearAnalyzer() }
             runCatching { provider?.unbindAll() }
-            analyzerExecutor.shutdown()
             runCatching { scanner.close() }
+            rawExecutor.shutdown()
         }
     }
 

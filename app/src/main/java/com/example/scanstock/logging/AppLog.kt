@@ -8,6 +8,7 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.RejectedExecutionException
 
 /**
  * 运行日志 + 崩溃报告（v1.6）。
@@ -51,8 +52,17 @@ object AppLog {
     /** 单个日志文件超过这个大小就滚动一次，避免无限增长占满存储 */
     private const val MAX_BYTES = 512L * 1024L
 
-    /** 崩溃报告最多保留几份（更早的自动删掉，用户只需要最近几次） */
+    /** 崩溃报告 / 已拦截报告各自最多保留几份（更早的自动删掉，用户只需要最近几次） */
     private const val MAX_CRASH_FILES = 5
+
+    /** 崩溃报告文件名前缀 */
+    const val CRASH_PREFIX = "crash-"
+
+    /** 已拦截（非致命）异常报告的文件名前缀，v1.8.8 */
+    const val SWALLOWED_PREFIX = "swallowed-"
+
+    /** 判断异常类型时沿 cause 链最多走几层，防病态自引用 */
+    private const val MAX_CAUSE_DEPTH = 16
 
     /** 崩溃报告里附带多少行运行日志 */
     private const val CRASH_LOG_TAIL_LINES = 200
@@ -86,7 +96,7 @@ object AppLog {
         deviceHeader = buildDeviceHeader(app)
         i(TAG, "=== 进程启动 ===")
         deviceHeader.lineSequence().forEach { line -> if (line.isNotBlank()) i(TAG, line) }
-        pruneOldCrashFiles(dir)
+        pruneOldReports(dir)
     }
 
     /** 安装全局未捕获异常处理器。必须在 Application.onCreate 里尽早调用 */
@@ -94,11 +104,46 @@ object AppLog {
         val app = context.applicationContext
         val previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            // 「往已关闭的线程池投任务被拒」在**非主线程**上不算致命（v1.8.8）。
+            // 它代表「有一件后台工作被丢弃」，那个线程本来也只是一次性任务线程——
+            // 拦下来进程能继续用，见 [isDroppedWork]。
+            //
+            // 主线程不能这么处理：异常已经把 `Looper.loop()` 的栈整个展开，
+            // 就算 handler 正常返回，主线程也回不去了 —— 表现出来是「界面冻住 / ANR」，
+            // 比一个有对话框的闪退更难查，也更让人以为「没崩」。
+            // 主线程这条路径靠的是上面三道防线（执行器包装、拆除顺序、released 闸门），
+            // 而不是在最后一步假装没发生。
+            if (!isMainThread(thread) && isDroppedWork(throwable)) {
+                runCatching { writeSwallowedReport(app, thread, throwable) }
+                return@setDefaultUncaughtExceptionHandler
+            }
             // 记录崩溃绝不能自己再抛：catch 住之后无论如何都要把控制权交还给系统默认处理器，
             // 否则进程会「卡住不退出」，用户看到的是黑屏而不是崩溃对话框。
             runCatching { writeCrashReport(app, thread, throwable) }
             runCatching { previous?.uncaughtException(thread, throwable) }
         }
+    }
+
+    /** 崩溃线程是不是主线程。取不到 Looper（极端早期崩溃）时退回按线程名判断 */
+    private fun isMainThread(thread: Thread): Boolean =
+        runCatching { android.os.Looper.getMainLooper()?.thread === thread }
+            .getOrDefault(thread.name == "main")
+
+    /**
+     * 这个异常是不是「被丢弃的后台工作」：沿 cause 链找 [RejectedExecutionException]。
+     *
+     * 只认这一种，别扩大范围：换成「所有 RuntimeException 都不崩」等于把真正的 bug
+     * 变成「悄悄不工作」，那比闪退还难查。
+     */
+    private fun isDroppedWork(throwable: Throwable): Boolean {
+        var t: Throwable? = throwable
+        var depth = 0
+        while (t != null && depth < MAX_CAUSE_DEPTH) {
+            if (t is RejectedExecutionException) return true
+            t = t.cause
+            depth++
+        }
+        return false
     }
 
     // ───────────────────────────── 写日志 ─────────────────────────────
@@ -144,32 +189,89 @@ object AppLog {
      * 崩溃前的事件流 → 完整堆栈。
      */
     private fun writeCrashReport(context: Context, thread: Thread, throwable: Throwable) {
-        val dir = logDir ?: File(context.filesDir, LOG_DIR).also { it.mkdirs() }
+        val dir = ensureLogDir(context)
         val stamp = fileStampFmt.format(Date())
-        val file = File(dir, "crash-$stamp-${thread.name.replace(Regex("[^A-Za-z0-9_-]"), "_")}.txt")
-
-        val sb = StringBuilder(16 * 1024)
-        sb.appendLine("=== ScanStock 崩溃报告 ===")
-        sb.appendLine("时间: ${Date()}")
-        sb.appendLine("崩溃线程: ${thread.name} (id=${thread.id})")
-        sb.appendLine(deviceHeader)
-        sb.appendLine("内存: ${memorySummary()}")
-        sb.appendLine("进程: pid=${Process.myPid()} 运行时长=${uptimeText()}")
-        sb.appendLine()
-        sb.appendLine("--- 崩溃线程堆栈 ---")
-        thread.stackTrace.forEach { sb.appendLine("    at $it") }
-        sb.appendLine()
-        sb.appendLine("--- 异常 ---")
-        sb.appendLine(Log.getStackTraceString(throwable))
-        sb.appendLine()
-        sb.appendLine("--- 崩溃前的运行日志（尾部 $CRASH_LOG_TAIL_LINES 行）---")
-        sb.appendLine(tailOfAppLog(dir, CRASH_LOG_TAIL_LINES))
-        runCatching { file.writeText(sb.toString(), Charsets.UTF_8) }
+        val file = File(dir, "crash-$stamp-${safeThreadName(thread)}.txt")
+        val body = reportBody(
+            title = "=== ScanStock 崩溃报告 ===",
+            note = null,
+            thread = thread,
+            throwable = throwable,
+            dir = dir
+        )
+        runCatching { file.writeText(body, Charsets.UTF_8) }
 
         // 崩溃报告本身也要在运行日志里留一条：用户下次打开看到横幅时，
         // 日志里能对上「哪一次打开对应哪一份报告」
         write("E", TAG, "已记录崩溃报告: ${file.name}")
-        pruneOldCrashFiles(dir)
+        pruneOldReports(dir)
+    }
+
+    /**
+     * 记录一个「本可以杀掉进程、但被我们拦下来」的异常（v1.8.8）。
+     *
+     * 目前只用于 [RejectedExecutionException]：它意味着某个后台任务被丢弃，
+     * 而不是进程状态损坏。这类异常留在**调用现场**（主线程 / 相机线程）上会直接闪退，
+     * 而它往往来自库内部的时序竞争，端侧没有干净的改法。
+     *
+     * 单独存成 `swallowed-*.txt`，不混进崩溃报告计数里——它不是崩溃，
+     * 但**必须留证据**：如果同一版本反复出现，说明有执行器被提前关了，那是真 bug。
+     */
+    private fun writeSwallowedReport(context: Context, thread: Thread, throwable: Throwable) {
+        val dir = ensureLogDir(context)
+        val stamp = fileStampFmt.format(Date())
+        val file = File(dir, "swallowed-$stamp-${safeThreadName(thread)}.txt")
+        val body = reportBody(
+            title = "=== ScanStock 已拦截异常（进程未退出）===",
+            note = "判定：线程池已关闭后仍有任务被提交，属于「一件后台工作被丢弃」，" +
+                "不是进程状态损坏，因此只记录、不退出。若同一版本反复出现，需要排查执行器被提前关闭的位置。",
+            thread = thread,
+            throwable = throwable,
+            dir = dir
+        )
+        runCatching { file.writeText(body, Charsets.UTF_8) }
+        write("W", TAG, "已拦截非致命异常并记录: ${file.name}")
+        pruneOldReports(dir)
+    }
+
+    private fun ensureLogDir(context: Context): File =
+        logDir ?: File(context.filesDir, LOG_DIR).also { it.mkdirs() }
+
+    private fun safeThreadName(thread: Thread): String =
+        thread.name.replace(Regex("[^A-Za-z0-9_-]"), "_")
+
+    /** 崩溃报告 / 已拦截异常报告的公共正文 */
+    private fun reportBody(
+        title: String,
+        note: String?,
+        thread: Thread,
+        throwable: Throwable,
+        dir: File
+    ): String = buildString(16 * 1024) {
+        appendLine(title)
+        appendLine("时间: ${Date()}")
+        appendLine("崩溃线程: ${thread.name} (id=${thread.id})")
+        appendLine(deviceHeader)
+        appendLine("内存: ${memorySummary()}")
+        appendLine("进程: pid=${Process.myPid()} 本进程已运行=${uptimeText()}")
+        // 这两个数以前混在一起：`SystemClock.elapsedRealtime()` 是**设备开机时长**，
+        // 不是进程运行时长。1.8.7 的崩溃报告里写着「运行时长=195151s」（54 小时），
+        // 而同一次启动的日志显示进程只活了 81 秒——那个误导让排查多绕了一圈。
+        appendLine("设备已开机=${deviceUptimeText()}")
+        if (note != null) {
+            appendLine()
+            appendLine("--- 说明 ---")
+            appendLine(note)
+        }
+        appendLine()
+        appendLine("--- 崩溃线程堆栈 ---")
+        thread.stackTrace.forEach { appendLine("    at $it") }
+        appendLine()
+        appendLine("--- 异常 ---")
+        appendLine(Log.getStackTraceString(throwable))
+        appendLine()
+        appendLine("--- 崩溃前的运行日志（尾部 $CRASH_LOG_TAIL_LINES 行）---")
+        appendLine(tailOfAppLog(dir, CRASH_LOG_TAIL_LINES))
     }
 
     private fun tailOfAppLog(dir: File, lines: Int): String {
@@ -181,21 +283,33 @@ object AppLog {
         }.getOrDefault("(日志读取失败)")
     }
 
-    private fun pruneOldCrashFiles(dir: File) {
+    /** 按类型分别滚动清理：崩溃报告与已拦截报告各留最近 [MAX_CRASH_FILES] 份 */
+    private fun pruneOldReports(dir: File) {
         runCatching {
-            val crashes = dir.listFiles { f -> f.isFile && f.name.startsWith("crash-") }
+            dir.listFiles { f -> f.isFile && f.name.startsWith(CRASH_PREFIX) }
                 ?.sortedByDescending { it.name }
-                ?: return
-            crashes.drop(MAX_CRASH_FILES).forEach { it.delete() }
+                ?.drop(MAX_CRASH_FILES)
+                ?.forEach { it.delete() }
+            dir.listFiles { f -> f.isFile && f.name.startsWith(SWALLOWED_PREFIX) }
+                ?.sortedByDescending { it.name }
+                ?.drop(MAX_CRASH_FILES)
+                ?.forEach { it.delete() }
         }
     }
 
     // ───────────────────────────── 对外查询 ─────────────────────────────
 
     /** 现有的崩溃报告，最新的在前 */
-    fun crashReports(context: Context): List<File> {
+    fun crashReports(context: Context): List<File> =
+        reportsWithPrefix(context, CRASH_PREFIX)
+
+    /** 被拦截下来、没有导致闪退的异常记录（v1.8.8），最新的在前 */
+    fun swallowedReports(context: Context): List<File> =
+        reportsWithPrefix(context, SWALLOWED_PREFIX)
+
+    private fun reportsWithPrefix(context: Context, prefix: String): List<File> {
         val dir = File(context.filesDir, LOG_DIR)
-        return dir.listFiles { f -> f.isFile && f.name.startsWith("crash-") }
+        return dir.listFiles { f -> f.isFile && f.name.startsWith(prefix) }
             ?.sortedByDescending { it.name }
             ?: emptyList()
     }
@@ -207,12 +321,17 @@ object AppLog {
         val size = (if (appLog.exists()) appLog.length() else 0L) +
             (File(dir, "$APP_LOG.1").takeIf { it.exists() }?.length() ?: 0L)
         val crashes = crashReports(context).size
+        val swallowed = swallowedReports(context).size
         val sizeText = when {
             size >= 1024 * 1024 -> String.format(Locale.US, "%.1f MB", size / 1024.0 / 1024.0)
             size >= 1024 -> String.format(Locale.US, "%.1f KB", size / 1024.0)
             else -> "$size B"
         }
-        return if (crashes == 0) sizeText else "$sizeText · 崩溃报告 $crashes 份"
+        return buildString {
+            append(sizeText)
+            if (crashes > 0) append(" · 崩溃报告 $crashes 份")
+            if (swallowed > 0) append(" · 已拦截 $swallowed 次")
+        }
     }
 
     /**
@@ -231,20 +350,32 @@ object AppLog {
         outDir.listFiles()?.forEach { runCatching { it.delete() } }
 
         val crashes = crashReports(context)
+        val swallowed = swallowedReports(context)
         val appLog = File(srcDir, APP_LOG)
         val appLog1 = File(srcDir, "$APP_LOG.1")
-        if (crashes.isEmpty() && !appLog.exists() && !appLog1.exists()) return null
+        if (crashes.isEmpty() && swallowed.isEmpty() && !appLog.exists() && !appLog1.exists()) {
+            return null
+        }
 
         val out = File(outDir, "$BUNDLE_PREFIX${stampFmt.format(Date())}.txt")
         val sb = StringBuilder(32 * 1024)
         sb.appendLine("=== ScanStock 运行日志导出包 ===")
         sb.appendLine("导出时间: ${Date()}")
         sb.appendLine(deviceHeader)
-        sb.appendLine("崩溃报告: ${crashes.size} 份")
+        sb.appendLine("崩溃报告: ${crashes.size} 份 · 已拦截异常: ${swallowed.size} 份")
         sb.appendLine()
 
         crashes.forEachIndexed { index, file ->
             sb.appendLine("──────── 崩溃报告 ${index + 1}/${crashes.size}：${file.name} ────────")
+            sb.appendLine(runCatching { file.readText(Charsets.UTF_8) }.getOrDefault("(读取失败)"))
+            sb.appendLine()
+        }
+
+        // 已拦截的异常单独一段：它们不导致闪退，但往往是「另一个闪退」的先行指标
+        swallowed.forEachIndexed { index, file ->
+            sb.appendLine(
+                "──────── 已拦截异常 ${index + 1}/${swallowed.size}：${file.name} ────────"
+            )
             sb.appendLine(runCatching { file.readText(Charsets.UTF_8) }.getOrDefault("(读取失败)"))
             sb.appendLine()
         }
@@ -281,7 +412,20 @@ object AppLog {
         "heap used=${used}MB max=${max}MB"
     }.getOrDefault("(unknown)")
 
+    /**
+     * 本进程已运行时长。
+     *
+     * 口径修正（v1.8.8）：以前直接用 `SystemClock.elapsedRealtime()`，那是**设备开机时长**，
+     * 而不是进程运行时长。1.8.7 的崩溃报告因此写着「运行时长=195151s」，同一次启动的
+     * 运行日志却显示进程只活了 81 秒——两者差 2000 倍，排查时白白多绕一圈。
+     */
     private fun uptimeText(): String = runCatching {
+        val sinceProcessStart = android.os.SystemClock.elapsedRealtime() - Process.getStartUptimeMillis()
+        "${sinceProcessStart / 1000}s"
+    }.getOrDefault("(unknown)")
+
+    /** 设备开机时长（与进程时长分开记，是判断「是不是系统级问题」的关键区分） */
+    private fun deviceUptimeText(): String = runCatching {
         val ms = android.os.SystemClock.elapsedRealtime()
         "${ms / 1000}s"
     }.getOrDefault("(unknown)")

@@ -12,8 +12,8 @@ android {
         applicationId = "com.example.scanstock"
         minSdk = 24
         targetSdk = 35
-        versionCode = 20
-        versionName = "1.8.7"
+        versionCode = 21
+        versionName = "1.8.8"
         // 本项目无任何 JVM 测试依赖，此处不配置 testInstrumentationRunner
     }
 
