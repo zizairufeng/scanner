@@ -98,6 +98,7 @@ fun SettingsSheet(
     zxingFallbackEnabled: Boolean,
     duplicateAlertEnabled: Boolean,
     persistEnabled: Boolean,
+    historyEnabled: Boolean,
     logSummary: String,
     crashReportCount: Int,
     onFeedbackChanged: (Boolean) -> Unit,
@@ -116,6 +117,7 @@ fun SettingsSheet(
     onZxingFallbackChanged: (Boolean) -> Unit,
     onDuplicateAlertChanged: (Boolean) -> Unit,
     onPersistChanged: (Boolean) -> Unit,
+    onHistoryChanged: (Boolean) -> Unit,
     onExportLogs: () -> Unit,
     onClearLogs: () -> Unit,
     onDismiss: () -> Unit
@@ -197,12 +199,14 @@ fun SettingsSheet(
                         autoZoomEnabled = autoZoomEnabled,
                         copyFormat = copyFormat,
                         persistEnabled = persistEnabled,
+                        historyEnabled = historyEnabled,
                         onFeedbackChanged = onFeedbackChanged,
                         onVibrateChanged = onVibrateChanged,
                         onBeepChanged = onBeepChanged,
                         onAutoZoomChanged = onAutoZoomChanged,
                         onCopyFormatChanged = onCopyFormatChanged,
-                        onPersistChanged = onPersistChanged
+                        onPersistChanged = onPersistChanged,
+                        onHistoryChanged = onHistoryChanged
                     )
 
                     SettingsPage.ENGINE -> EnginePage(
@@ -269,7 +273,7 @@ fun SettingsSheet(
 // 各分类页内容
 // ──────────────────────────────────────────────────────────────
 
-/** 扫码页：识别反馈 + 自动变焦 + 复制格式 + 会话保存 */
+/** 扫码页：识别反馈 + 自动变焦 + 复制格式 + 会话保存 + 扫描历史 */
 @Composable
 private fun ScanPage(
     feedbackEnabled: Boolean,
@@ -278,12 +282,14 @@ private fun ScanPage(
     autoZoomEnabled: Boolean,
     copyFormat: CopyFormat,
     persistEnabled: Boolean,
+    historyEnabled: Boolean,
     onFeedbackChanged: (Boolean) -> Unit,
     onVibrateChanged: (Boolean) -> Unit,
     onBeepChanged: (Boolean) -> Unit,
     onAutoZoomChanged: (Boolean) -> Unit,
     onCopyFormatChanged: (CopyFormat) -> Unit,
-    onPersistChanged: (Boolean) -> Unit
+    onPersistChanged: (Boolean) -> Unit,
+    onHistoryChanged: (Boolean) -> Unit
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
         SwitchRow(
@@ -353,6 +359,15 @@ private fun ScanPage(
             subtitle = "退出或进程被回收后下次启动提示恢复（只存本机，不联网）",
             checked = persistEnabled,
             onCheckedChange = onPersistChanged
+        )
+
+        // 扫描历史（v1.8.9）：与会话快照是两个开关，别以为是同一件事。
+        // 前者存「这次还剩什么」（会被清空/覆盖），后者存「扫到过什么」（只增不改）。
+        SwitchRow(
+            title = "保存扫描历史",
+            subtitle = "每个扫到的码都实时写入本机，清空列表也不会删；右上角「历史」里可搜索",
+            checked = historyEnabled,
+            onCheckedChange = onHistoryChanged
         )
     }
 }

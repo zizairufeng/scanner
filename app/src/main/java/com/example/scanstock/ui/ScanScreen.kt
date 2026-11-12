@@ -65,6 +65,7 @@ import com.example.scanstock.export.Exporter
 import com.example.scanstock.logging.AppLog
 import com.example.scanstock.ui.components.CameraPreviewCard
 import com.example.scanstock.ui.components.HintTone
+import com.example.scanstock.ui.components.HistorySheet
 import com.example.scanstock.ui.components.PermissionPanel
 import com.example.scanstock.ui.components.ResultListPanel
 import com.example.scanstock.ui.components.ScanHintSpec
@@ -106,6 +107,9 @@ fun ScanScreen(viewModel: ScanViewModel = viewModel()) {
     // 撤销单独一槽：它不能被普通通知顶掉（窗口一消失就真找不回来了）
     var undoNotice by remember { mutableStateOf<Notice?>(null) }
     var noticeSeq by remember { mutableIntStateOf(0) }
+
+    // 历史面板。用 saveable 而非 remember：旋转屏幕后不该把用户踢回扫码页
+    var historyOpen by rememberSaveable { mutableStateOf(false) }
 
     /** 推一条通知到状态栏。id 递增，保证「连续两条相同文案」也会重新计时 */
     fun pushNotice(
@@ -331,6 +335,8 @@ fun ScanScreen(viewModel: ScanViewModel = viewModel()) {
                         containerColor = MaterialTheme.colorScheme.background
                     ),
                     actions = {
+                        // 历史入口（v1.8.9）放在相册之前：它是盘点中途最常回查的那个
+                        TextButton(onClick = { historyOpen = true }) { Text("历史") }
                         TextButton(onClick = {
                             // 相册入口始终可用：即使没有相机权限，也能靠图片完成识别
                             photoPicker.launch(
@@ -509,8 +515,28 @@ fun ScanScreen(viewModel: ScanViewModel = viewModel()) {
         }
     }
 
+    // ───────────── 扫描历史面板（v1.8.9）─────────────
+    //
+    // 盖在相机上而不是跳页：相机预览一旦销毁重建，用户就得重新对准目标。
+    // 面板的底色不透明，相机在下面继续跑，关掉即可接着扫。
+    if (historyOpen) {
+        HistorySheet(
+            onCopyValue = { value ->
+                val ok = context.copyToClipboard(value)
+                pushNotice(
+                    text = if (ok) "已复制该条码值" else "剪贴板不可用，复制失败",
+                    tone = if (ok) HintTone.SUCCESS else HintTone.ACTION
+                )
+            },
+            onExport = viewModel::requestExportHistory,
+            onMessage = { text -> pushNotice(text, HintTone.NEUTRAL) },
+            onDismiss = { historyOpen = false }
+        )
+    }
+
     if (state.sheetOpen) {
-        SettingsSheet(            feedbackEnabled = state.feedbackEnabled,
+        SettingsSheet(
+            feedbackEnabled = state.feedbackEnabled,
             vibrateEnabled = state.vibrateEnabled,
             beepEnabled = state.beepEnabled,
             copyFormat = state.copyFormat,
@@ -526,6 +552,7 @@ fun ScanScreen(viewModel: ScanViewModel = viewModel()) {
             zxingFallbackEnabled = state.zxingFallbackEnabled,
             duplicateAlertEnabled = state.duplicateAlertEnabled,
             persistEnabled = state.persistEnabled,
+            historyEnabled = state.historyEnabled,
             logSummary = state.logSummary,
             crashReportCount = state.crashReportCount,
             onFeedbackChanged = viewModel::setFeedbackEnabled,
@@ -542,6 +569,7 @@ fun ScanScreen(viewModel: ScanViewModel = viewModel()) {
             onChecksumPolicyChanged = viewModel::setChecksumPolicy,
             onRoiRefineChanged = viewModel::setRoiRefineEnabled,
             onPersistChanged = viewModel::setPersistEnabled,
+            onHistoryChanged = viewModel::setHistoryEnabled,
             onExportLogs = viewModel::requestExportLogs,
             onClearLogs = viewModel::clearLogs,
             onZxingFallbackChanged = viewModel::setZxingFallbackEnabled,

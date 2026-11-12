@@ -3,6 +3,7 @@ package com.example.scanstock.data
 import com.example.scanstock.domain.CodeRule
 import com.example.scanstock.domain.DedupeMode
 import com.example.scanstock.domain.ScanItem
+import com.example.scanstock.domain.TsvCodec
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -43,17 +44,17 @@ class SessionStore(private val dir: File) {
         sb.append(HEADER).append('\n')
         sb.append(mode.name).append(SEP)
             .append(if (rule.enabled) "1" else "0").append(SEP)
-            .append(escape(rule.prefix)).append(SEP)
+            .append(TsvCodec.escape(rule.prefix)).append(SEP)
             .append(rule.length).append(SEP)
-            .append(escape(rule.regex)).append(SEP)
+            .append(TsvCodec.escape(rule.regex)).append(SEP)
             .append(nextSeq).append(SEP)
             .append(System.currentTimeMillis())
             .append('\n')
         for (item in items) {
             sb.append(item.seq).append(SEP)
                 .append(item.formatId).append(SEP)
-                .append(escape(item.formatName)).append(SEP)
-                .append(escape(item.value)).append(SEP)
+                .append(TsvCodec.escape(item.formatName)).append(SEP)
+                .append(TsvCodec.escape(item.value)).append(SEP)
                 .append(item.timeMillis).append(SEP)
                 .append(item.qty)
                 .append('\n')
@@ -97,9 +98,9 @@ class SessionStore(private val dir: File) {
         val mode = runCatching { DedupeMode.valueOf(meta[0]) }.getOrDefault(DedupeMode.STRICT)
         val rule = CodeRule(
             enabled = meta[1] == "1",
-            prefix = unescape(meta[2]),
+            prefix = TsvCodec.unescape(meta[2]),
             length = meta[3].toIntOrNull()?.coerceAtLeast(0) ?: 0,
-            regex = unescape(meta[4])
+            regex = TsvCodec.unescape(meta[4])
         )
         val nextSeq = meta[5].toIntOrNull() ?: 1
         val savedAt = meta[6].toLongOrNull() ?: 0L
@@ -110,13 +111,13 @@ class SessionStore(private val dir: File) {
             if (line.isEmpty()) continue
             val p = line.split(SEP)
             if (p.size < 6) continue
-            val value = unescape(p[3])
+            val value = TsvCodec.unescape(p[3])
             if (value.isEmpty()) continue
             val millis = p[4].toLongOrNull() ?: 0L
             items += ScanItem(
                 seq = p[0].toIntOrNull() ?: (i - 1),
                 formatId = p[1].toIntOrNull() ?: -1,
-                formatName = unescape(p[2]),
+                formatName = TsvCodec.unescape(p[2]),
                 value = value,
                 timeMillis = millis,
                 // 时间串是派生数据：恢复时按墙上时间重算，避免旧版本缺字段时显示成空
@@ -156,40 +157,7 @@ class SessionStore(private val dir: File) {
     private companion object {
         const val FILE_NAME = "session.tsv"
         const val HEADER = "SCANSTOCK-SESSION-1"
-        const val SEP = '\t'
-
-        /**
-         * 转义：字段里若出现分隔符、换行或反斜杠，必须先转义，否则一行会裂成多行，
-         * 整个文件从此读不出来。条码值确实可能含这些字符（二维码里塞换行不罕见）。
-         */
-        fun escape(raw: String): String = raw
-            .replace("\\", "\\\\")
-            .replace("\t", "\\t")
-            .replace("\n", "\\n")
-            .replace("\r", "\\r")
-
-        fun unescape(raw: String): String {
-            if (!raw.contains('\\')) return raw
-            val sb = StringBuilder(raw.length)
-            var i = 0
-            while (i < raw.length) {
-                val ch = raw[i]
-                if (ch != '\\' || i + 1 >= raw.length) {
-                    sb.append(ch)
-                    i++
-                    continue
-                }
-                when (raw[i + 1]) {
-                    't' -> sb.append('\t')
-                    'n' -> sb.append('\n')
-                    'r' -> sb.append('\r')
-                    '\\' -> sb.append('\\')
-                    else -> sb.append(raw[i + 1])
-                }
-                i += 2
-            }
-            return sb.toString()
-        }
+        const val SEP = TsvCodec.SEP
 
         /**
          * load() 只在 ViewModel 初始化的 IO 线程里跑一次，不存在并发，

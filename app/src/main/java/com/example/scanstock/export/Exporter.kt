@@ -6,6 +6,7 @@ import androidx.core.content.FileProvider
 import com.example.scanstock.domain.CopyFormat
 import com.example.scanstock.domain.CopyFormatter
 import com.example.scanstock.domain.ScanItem
+import com.example.scanstock.domain.ScanRecord
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -108,5 +109,94 @@ object Exporter {
         return if (total == rows) "共 $rows 条" else "共 $rows 条 / 数量合计 $total"
     }
 
+    /**
+     * 导出**扫描历史**（v1.8.9）。
+     *
+     * 不复用 [export] 的那套列：「序号 / 数量」在历史里没有意义
+     * （历史是一条条事件，不是一行行货），而「时间 / 类型 / 来源」恰恰是它才有的信息。
+     * 共用同一份缓存目录与 FileProvider 授权路径，只是列不同。
+     *
+     * @throws java.io.IOException 写文件失败（磁盘满等）
+     */
+    fun exportHistory(context: Context, records: List<ScanRecord>, kind: Kind): ExportFile {
+        val dir = File(context.cacheDir, "exports").apply { mkdirs() }
+        dir.listFiles()?.forEach { runCatching { it.delete() } }
+
+        val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+        val file = File(dir, "ScanStock_history_$stamp.${kind.ext}")
+
+        when (kind) {
+            Kind.TXT -> file.writeText(buildHistoryText(records), Charsets.UTF_8)
+            // 文件给 Excel 双击打开，加 UTF-8 BOM；剪贴板不加（会显示成乱码字符）
+            Kind.CSV -> file.writeBytes(
+                byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte()) +
+                    buildHistoryCsv(records).toByteArray(Charsets.UTF_8)
+            )
+            Kind.XLSX -> file.writeBytes(XlsxWriter.write(HISTORY_SHEET_NAME, buildHistoryRows(records)))
+        }
+
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        return ExportFile(
+            uri = uri,
+            fileName = file.name,
+            mime = kind.mime,
+            sizeBytes = file.length(),
+            kind = kind
+        )
+    }
+
+    /** 纯文本：`时间<Tab>类型<Tab>内容`。保留了时间，否则导出去就对不上账 */
+    private fun buildHistoryText(records: List<ScanRecord>): String {
+        val sb = StringBuilder(records.size * 48)
+        records.forEach { record ->
+            sb.append(historyTime(record.timeMillis)).append('\t')
+                .append(record.kind.label).append('\t')
+                .append(record.value).append('\n')
+        }
+        return sb.toString()
+    }
+
+    private fun buildHistoryCsv(records: List<ScanRecord>): String {
+        val sb = StringBuilder(records.size * 64)
+        sb.append("时间,类型,码制,内容,来源\n")
+        records.forEach { record ->
+            sb.append(historyTime(record.timeMillis)).append(',')
+                .append(CopyFormatter.csvEscape(record.kind.label)).append(',')
+                .append(CopyFormatter.csvEscape(record.formatName)).append(',')
+                .append(CopyFormatter.csvEscape(record.value)).append(',')
+                .append(CopyFormatter.csvEscape(record.source.label))
+                .append('\n')
+        }
+        return sb.toString()
+    }
+
+    private fun buildHistoryRows(records: List<ScanRecord>): List<List<XlsxWriter.Cell>> {
+        val rows = ArrayList<List<XlsxWriter.Cell>>(records.size + 1)
+        rows += listOf(
+            XlsxWriter.Cell.of("时间"),
+            XlsxWriter.Cell.of("类型"),
+            XlsxWriter.Cell.of("码制"),
+            XlsxWriter.Cell.of("内容"),
+            XlsxWriter.Cell.of("来源")
+        )
+        records.forEach { record ->
+            rows += listOf(
+                XlsxWriter.Cell.of(historyTime(record.timeMillis)),
+                XlsxWriter.Cell.of(record.kind.label),
+                XlsxWriter.Cell.of(record.formatName),
+                XlsxWriter.Cell.of(record.value),
+                XlsxWriter.Cell.of(record.source.label)
+            )
+        }
+        return rows
+    }
+
+    /** 历史跨天，时间必须带日期；精确到秒足够 */
+    private fun historyTime(millis: Long): String =
+        synchronized(HISTORY_TIME_FORMAT) { HISTORY_TIME_FORMAT.format(Date(millis)) }
+
+    private val HISTORY_TIME_FORMAT = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US)
+
     private const val SHEET_NAME = "盘点结果"
+    private const val HISTORY_SHEET_NAME = "扫描历史"
 }

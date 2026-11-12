@@ -7,7 +7,9 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.scanstock.camera.BarcodeFormats
 import com.example.scanstock.camera.ImageDecoder
+import com.example.scanstock.data.ScanHistoryStore
 import com.example.scanstock.data.SessionStore
+import com.example.scanstock.domain.AdmissionResult
 import com.example.scanstock.domain.ChecksumPolicy
 import com.example.scanstock.domain.ChecksumVerifier
 import com.example.scanstock.domain.CodeAdmission
@@ -20,7 +22,10 @@ import com.example.scanstock.domain.DedupeTracker
 import com.example.scanstock.domain.DetectedCode
 import com.example.scanstock.domain.DuplicateAlert
 import com.example.scanstock.domain.DuplicateMonitor
+import com.example.scanstock.domain.RecordKind
+import com.example.scanstock.domain.RecordSource
 import com.example.scanstock.domain.ScanItem
+import com.example.scanstock.domain.ScanRecord
 import com.example.scanstock.domain.ScanTuning
 import com.example.scanstock.domain.SequenceRenumber
 import com.example.scanstock.export.Exporter
@@ -81,6 +86,17 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
     private val duplicateMonitor = DuplicateMonitor()
     // 传 filesDir 而不是 Context：存储类不依赖 Android，纯 JVM 单测能直接跑真实读写
     private val store = SessionStore(application.filesDir)
+
+    /**
+     * 扫描历史账本（v1.8.9）。
+     *
+     * 与 [store] 完全独立：那边存「这次盘点还剩什么」（会被清空/覆盖），
+     * 这边存「这台机器扫到过什么」（只追加，清空列表也不动）。
+     * 进程级单例——历史面板也要读同一个写线程写出来的文件，两个实例会互相踩写入位置。
+     */
+    private val history = ScanHistoryStore.get(application.filesDir) { message, error ->
+        AppLog.w(TAG, message, error)
+    }
     private val appContext = application.applicationContext
 
     /**
@@ -170,7 +186,16 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
      * 线程安全性：ML Kit 的 Task 回调默认在主线程执行，因此 nextSeq 的 `++`
      * 不存在竞态；即便将来改为后台 Executor，也只需把整个方法体加锁即可。
      */
-    fun onCodesDetected(codes: List<DetectedCode>) {
+    fun onCodesDetected(codes: List<DetectedCode>) = admit(codes, RecordSource.CAMERA)
+
+    /**
+     * 真正的准入与计数逻辑。
+     *
+     * @param source 这一批码来自相机还是相册。只有历史账本关心它
+     *               （事后要知道「这条是拍的图片里的还是实时扫的」），
+     *               准入判定本身对两者一视同仁
+     */
+    private fun admit(codes: List<DetectedCode>, source: RecordSource) {
         val decoded = codes.filter { !it.potentialOnly && it.value.isNotEmpty() }
         if (decoded.isEmpty()) {
             // 只有「疑似条码」而没解出来 → 提高 potentialTick 让 UI 提示用户靠近。
@@ -302,7 +327,86 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
         if (addedCount > 0) {
             AppLog.i(TAG, "计入 $addedCount 条，累计 ${snapshot.items.size} 条")
         }
+
+        // 历史账本：在列表更新**之后**写，这样 INC / DUP 能反查到码制。
+        // 与列表是否被保存无关——历史是独立的账本。
+        recordHistory(admission, nowWall, source, snapshot.items)
+
         schedulePersist()
+    }
+
+    /**
+     * 把这一帧的准入结果写进历史账本（v1.8.9）。
+     *
+     * 三类事件分别记账，语义不要混：
+     *  - [RecordKind.NEW]：新增了一行；
+     *  - [RecordKind.INC]：计数聚合下给已有行 +1（列表里没有新行，但货是过了一件）；
+     *  - [RecordKind.DUP]：严格去重下被丢弃的重复码。**屏幕上什么都没发生**，
+     *    只有历史里留得下——这正是「刚才那个码我扫过没有」能答上来的原因。
+     *
+     * `duplicates` 与 `increments` 在计数聚合模式下是**同一个码**（既命中已有行、又要累加），
+     * 所以必须先算出 increments 集合再从 duplicates 里排掉，否则同一件事会被记两遍，
+     * 「这台机器上这个码扫过几次」就会虚高一倍。
+     *
+     * INC / DUP 只有码值没有码制（准入结果里就不带），这里从当前列表反查一次。
+     * 反查是 O(列表长度) 的线性扫描，但它在人类的扫码节奏下（同一个码至少间隔一个去重窗口）
+     * 每帧最多发生个位数次，可以忽略；而给它们建全量索引反而会在每次删除时都要维护。
+     */
+    private fun recordHistory(
+        admission: AdmissionResult,
+        nowWall: Long,
+        source: RecordSource,
+        items: List<ScanItem>
+    ) {
+        if (!_uiState.value.historyEnabled) return
+        val increments = if (admission.duplicates.isEmpty()) {
+            emptySet()
+        } else {
+            admission.increments.toHashSet()
+        }
+        val capacity = admission.newCodes.size + admission.increments.size + admission.duplicates.size
+        val records = ArrayList<ScanRecord>(capacity)
+
+        for (code in admission.newCodes) {
+            records += ScanRecord(
+                timeMillis = nowWall,
+                kind = RecordKind.NEW,
+                formatId = code.formatId,
+                formatName = code.formatName,
+                value = code.value,
+                session = history.session,
+                source = source
+            )
+        }
+        for (value in admission.increments) {
+            records += recordOf(value, RecordKind.INC, nowWall, source, items)
+        }
+        for (value in admission.duplicates) {
+            if (value in increments) continue
+            records += recordOf(value, RecordKind.DUP, nowWall, source, items)
+        }
+
+        if (records.isEmpty()) return
+        history.append(records)
+    }
+
+    private fun recordOf(
+        value: String,
+        kind: RecordKind,
+        nowWall: Long,
+        source: RecordSource,
+        items: List<ScanItem>
+    ): ScanRecord {
+        val known = items.firstOrNull { it.value == value }
+        return ScanRecord(
+            timeMillis = nowWall,
+            kind = kind,
+            formatId = known?.formatId ?: -1,
+            formatName = known?.formatName ?: "",
+            value = value,
+            session = history.session,
+            source = source
+        )
     }
 
     /**
@@ -539,6 +643,59 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setCopyFormat(format: CopyFormat) {
         _uiState.update { it.copy(copyFormat = format) }
+    }
+
+    // ──────────────────────────── 扫描历史（v1.8.9）────────────────────────────
+
+    /** 历史保存开关。关掉只是此后不再记，已有历史一条不动 */
+    fun setHistoryEnabled(enabled: Boolean) {
+        _uiState.update { it.copy(historyEnabled = enabled) }
+        if (enabled) {
+            _events.tryEmit(
+                UiEvent.Message("已开启扫描历史：每条扫码都实时落盘，清空列表不会删掉它")
+            )
+        } else {
+            // 关之前先把在途的写刷完，否则「刚扫的最后几条」会随开关一起消失
+            viewModelScope.launch(Dispatchers.IO) { history.flush() }
+            _events.tryEmit(UiEvent.Message("已关闭扫描历史，此后不再记录（已有历史仍可查）"))
+        }
+    }
+
+    /** 导出历史记录（搜索结果或全部），走与结果导出同一条分享通路 */
+    fun requestExportHistory(records: List<ScanRecord>, kind: Exporter.Kind) {
+        if (records.isEmpty()) {
+            _events.tryEmit(UiEvent.Message("历史里没有可导出的记录"))
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { Exporter.exportHistory(getApplication(), records, kind) }
+                .onSuccess { file ->
+                    AppLog.i(TAG, "导出历史 ${kind.name} 成功: ${file.fileName} (${records.size} 条)")
+                    _events.tryEmit(
+                        UiEvent.ShareExport(
+                            uri = file.uri,
+                            mime = file.mime,
+                            fileName = file.fileName,
+                            summary = "历史 $records.size 条"
+                        )
+                    )
+                }
+                .onFailure { e ->
+                    AppLog.e(TAG, "导出历史 ${kind.name} 失败（${records.size} 条）", e)
+                    _events.tryEmit(UiEvent.Message("导出失败：${e.message ?: e.javaClass.simpleName}"))
+                }
+        }
+    }
+
+    /** 清空全部历史。不可撤销，调用方必须先让用户确认 */
+    fun requestClearHistory() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val ok = history.clear()
+            AppLog.i(TAG, "清空扫描历史：${if (ok) "成功" else "超时未完成"}")
+            _events.tryEmit(
+                UiEvent.Message(if (ok) "扫描历史已清空" else "清空未完成，请稍后重试")
+            )
+        }
     }
 
     // ──────────────────────────── 设置项 ────────────────────────────
@@ -831,7 +988,7 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                 val decodedCount = codes.count { !it.potentialOnly }
                 AppLog.i(TAG, "相册识别完成，解码 $decodedCount 个")
                 // 相册结果同样走去重与规则过滤，防止一张图里同款商品被重复计入
-                onCodesDetected(codes)
+                admit(codes, RecordSource.GALLERY)
                 if (decodedCount == 0) {
                     _events.tryEmit(UiEvent.Message("图片里没有识别到条码，换一张更清晰、码占画面更大的图片"))
                 } else {
@@ -867,8 +1024,12 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
     /**
      * 立即写盘（切后台 / 退出前调用）。
      * 取消掉还在等待的防抖任务，避免它稍后用一个已经过期的状态覆盖刚写的内容。
+     *
+     * 历史账本**不受 [ScanUiState.persistEnabled] 影响**：那个开关管的是
+     * 「会话快照要不要留」，而历史是独立账本，关掉会话保存不该连带停掉历史。
      */
     fun flushPersist() {
+        viewModelScope.launch(Dispatchers.IO) { history.flush() }
         if (!_uiState.value.persistEnabled) return
         persistJob?.cancel()
         persistJob = viewModelScope.launch(Dispatchers.IO) { writeSnapshot() }
@@ -967,6 +1128,10 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
         // 必须同步补写一次，否则最后 500ms 内的扫描会丢。
         persistJob?.cancel()
         if (_uiState.value.persistEnabled) writeSnapshot()
+        // 历史账本同理，但它走自己的写线程，只能同步等（上限 500ms）。
+        // 队列通常本来就是空的——每次 append 后写线程立刻 write + fsync，
+        // 所以这里的等待实际上几乎不耗时
+        runCatching { history.flush(HISTORY_FLUSH_ON_EXIT_MS) }
         AppLog.i(TAG, "ViewModel 销毁，列表 ${_uiState.value.items.size} 条")
         feedback.close()
         runCatching { galleryScanner.close() }
@@ -981,6 +1146,15 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
 
         /** 写盘防抖窗口 */
         const val PERSIST_DEBOUNCE_MS = 500L
+
+        /**
+         * 退出时等待历史把队列写完的上限。
+         *
+         * 只在那里——`onCleared` 跑在主线程上，理论上该尽快返回。
+         * 设 500ms 是因为正常情况队列为空的概率接近 100%，几乎不会真的等这么久；
+         * 万一写线程卡死（磁盘 IO 异常），也不能让界面在退出时僵住几秒。
+         */
+        const val HISTORY_FLUSH_ON_EXIT_MS = 500L
 
         /**
          * 识别帧异常写日志的最小间隔。
