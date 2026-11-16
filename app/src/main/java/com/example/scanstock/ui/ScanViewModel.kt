@@ -1062,15 +1062,35 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun refreshLogSummaryInternal() {
         runCatching {
-            val reports = AppLog.crashReports(appContext).size
+            // 两个口径不能混：
+            // - crashReportCount 是磁盘上报告的总份数（设置面板的提示、导出摘要要用）
+            // - crashNoticeHandled 是「有没有还没处理过的报告」，决定主屏提示卡显不显示
+            // 前者在用户点「忽略」之后仍然 > 0，那是对的：证据还在，只是不再打扰。
+            val reports = AppLog.crashReports(appContext)
+            val unseen = AppLog.unseenCrashReports(appContext)
             val summary = AppLog.summary(appContext)
-            _uiState.update { it.copy(crashReportCount = reports, logSummary = summary) }
+            _uiState.update {
+                it.copy(
+                    crashReportCount = reports.size,
+                    crashNoticeHandled = unseen.isEmpty(),
+                    logSummary = summary
+                )
+            }
         }
     }
 
-    /** 用户在横幅上点「忽略」：本次启动不再打扰（日志文件仍然保留） */
+    /**
+     * 用户在横幅上点「忽略」：把当前这些报告**持久化**标记为已处理。
+     *
+     * v1.8.10 之前这里只改一个内存布尔位，进程一重启（冷启动、或崩溃后被系统拉起）
+     * 卡片就又弹出来——磁盘上的 `crash-*.txt` 从没被动过。现在标记写进
+     * `logs/seen-crash.txt`，重启也不会丢；同时报告文件一份不删，证据仍然可以发送。
+     */
     fun dismissCrashNotice() {
-        _uiState.update { it.copy(crashNoticeDismissed = true) }
+        val unseen = AppLog.unseenCrashReports(appContext)
+        if (unseen.isEmpty()) return
+        AppLog.markCrashReportsSeen(appContext, unseen)
+        refreshLogSummaryInternal()
     }
 
     /**
@@ -1099,15 +1119,19 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                 _events.tryEmit(UiEvent.Message("日志文件准备失败，请重试"))
                 return@launch
             }
-            val reports = _uiState.value.crashReportCount
+            val total = _uiState.value.crashReportCount
             _events.tryEmit(
                 UiEvent.ShareExport(
                     uri = uri,
                     mime = "text/plain",
                     fileName = file.name,
-                    summary = if (reports > 0) "含 $reports 份崩溃报告" else "仅运行日志"
+                    summary = if (total > 0) "含 $total 份崩溃报告" else "仅运行日志"
                 )
             )
+            // 日志已经交到系统的分享面板，这批报告算处理过了。
+            // 不发邮件/不联网，只是一个本地标记；用户取消分享也不会再被这张卡反复打扰。
+            AppLog.markCrashReportsSeen(appContext, AppLog.unseenCrashReports(appContext))
+            refreshLogSummaryInternal()
         }
     }
 

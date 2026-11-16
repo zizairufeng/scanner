@@ -401,9 +401,10 @@ fun ScanScreen(viewModel: ScanViewModel = viewModel()) {
                     )
                 }
 
-                // 崩溃报告提示（v1.6）：本机记到了闪退就主动说一声，并给一个「发日志」的入口。
+                // 崩溃报告提示（v1.6，v1.8.10 改成「只看未处理的报告」）：
+                // 本机记到了闪退就主动说一声，并给一个「发日志」的入口。
                 // 放在会话恢复卡下面：恢复会话是当务之急，日志可以稍后再发。
-                if (state.crashReportCount > 0 && !state.crashNoticeDismissed) {
+                if (state.crashReportCount > 0 && !state.crashNoticeHandled) {
                     CrashNoticeCard(
                         count = state.crashReportCount,
                         summary = state.logSummary,

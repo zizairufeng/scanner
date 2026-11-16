@@ -303,6 +303,27 @@ object AppLog {
     fun crashReports(context: Context): List<File> =
         reportsWithPrefix(context, CRASH_PREFIX)
 
+    /**
+     * 还没被用户处理过的崩溃报告，最新的在前（v1.8.10）。
+     *
+     * 提示卡只认这个集合，不认 [crashReports]：报告文件最多会留 5 份，
+     * 用户点过「忽略」之后它们不该在每次启动都再把卡片顶出来。
+     * 但新崩溃一定会产生新文件名的报告，不在已读集合里，所以仍然会提醒。
+     */
+    fun unseenCrashReports(context: Context): List<File> {
+        val reports = crashReports(context)
+        if (reports.isEmpty()) return emptyList()
+        return noticeStore(context).unseen(reports)
+    }
+
+    /** 把这一批报告标记为已处理（用户点了「忽略」，或日志已发出） */
+    fun markCrashReportsSeen(context: Context, reports: List<File>) {
+        noticeStore(context).markSeen(reports.map { it.name })
+    }
+
+    private fun noticeStore(context: Context): CrashNoticeStore =
+        CrashNoticeStore(File(context.filesDir, LOG_DIR))
+
     /** 被拦截下来、没有导致闪退的异常记录（v1.8.8），最新的在前 */
     fun swallowedReports(context: Context): List<File> =
         reportsWithPrefix(context, SWALLOWED_PREFIX)
@@ -391,7 +412,12 @@ object AppLog {
         return out
     }
 
-    /** 清空所有日志与崩溃报告（用户在设置里主动清理，或分享成功后） */
+    /**
+     * 清空所有日志与崩溃报告（用户在设置里主动清理，或分享成功后）。
+     *
+     * 目录是整清空，`CrashNoticeStore` 的已读标记也一并删掉——报告都没了，
+     * 标记留着只会在下次崩溃时和新报告混在一起，没意义。
+     */
     fun clearAll(context: Context) {
         val dir = File(context.filesDir, LOG_DIR)
         runCatching { dir.listFiles()?.forEach { it.delete() } }

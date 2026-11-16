@@ -183,8 +183,15 @@ data class ScanUiState(
     /** 日志概况文案（大小 + 崩溃份数），设置面板与横幅共用，由 AppLog.summary() 生成 */
     val logSummary: String = "",
 
-    /** 用户点了横幅上的「忽略」之后不再打扰本次启动 */
-    val crashNoticeDismissed: Boolean = false,
+    /**
+     * 现有的崩溃报告是否都已处理过（v1.8.10）。
+     *
+     * 决定主屏提示卡显不显示的是这个字段，**不是** [crashReportCount]：
+     * 用户点过「忽略」之后报告文件仍留在磁盘上（证据要能发送），
+     * 但已读标记也落盘了，所以重启后这里仍是 true，不会反复弹。
+     * 若期间又崩了一次，出现新报告文件 → 这里变 false → 再提醒一次。
+     */
+    val crashNoticeHandled: Boolean = true,
 
     // ---- 瞬时提示（由 UI 消费，不参与业务）----
     /** 最近一次计入的码值，用于预览区顶部的提示条 */
